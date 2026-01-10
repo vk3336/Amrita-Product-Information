@@ -10,6 +10,7 @@ import {
 } from "react-router-dom";
 import "./App.css";
 import jsPDF from "jspdf";
+import { QRCodeCanvas } from "qrcode.react";
 
 /* ------------------ STATIC DATA (later replace by API) ------------------ */
 const PRODUCTS = [
@@ -114,10 +115,9 @@ function fallbackImageSvg(text = "AGE") {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/* -------- PDF generator for single product (simple + clean) -------- */
 /* -------- image helper: url -> dataURL (works for PDF) -------- */
 async function toDataUrl(url) {
-  const res = await fetch(url, { mode: "cors" }); // if CORS blocks, this will fail
+  const res = await fetch(url, { mode: "cors" });
   if (!res.ok) throw new Error("Image fetch failed");
   const blob = await res.blob();
 
@@ -145,7 +145,7 @@ async function downloadProductPdf(p) {
   const metaLine = `${p.category} • ${p.weave} • ${p.finish}`;
   const company = "Amrita Global Enterprises";
 
-  // ---------------- Header ----------------
+  // Header
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.text(company, margin, 16);
@@ -157,27 +157,23 @@ async function downloadProductPdf(p) {
   doc.setDrawColor(200);
   doc.line(margin, 26, pageW - margin, 26);
 
-  // ---------------- Title (left) + Image (right) ----------------
+  // Title (left) + Image (right)
   const topY = 34;
 
-  // Image box (right side)
   const imgW = 58;
   const imgH = 38;
   const imgX = pageW - margin - imgW;
   const imgY = topY;
 
-  // Draw subtle rounded image container (like your design)
   doc.setDrawColor(220);
   doc.roundedRect(imgX, imgY, imgW, imgH, 3, 3);
 
-  // Add image inside container with padding
   const pad = 2;
   const drawImgX = imgX + pad;
   const drawImgY = imgY + pad;
   const drawImgW = imgW - pad * 2;
   const drawImgH = imgH - pad * 2;
 
-  // Left text area width (avoid colliding with image)
   const textMaxW = pageW - margin - (imgW + 10) - margin;
 
   doc.setFont("helvetica", "bold");
@@ -189,37 +185,34 @@ async function downloadProductPdf(p) {
   doc.text(codeLine, margin, topY + 16);
   doc.text(metaLine, margin, topY + 22);
 
-  // Try to load real image; fallback to SVG
+  // Load real image; fallback if blocked
   let imgDataUrl = null;
   try {
     imgDataUrl = await toDataUrl(p.image);
   } catch (e) {
-    // fallback SVG always works
     imgDataUrl = fallbackImageSvg(p.id);
   }
 
-  // Decide format for addImage
-  const isPng = typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/png");
-  const isJpeg = typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/jpeg");
-  const isSvg = typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/svg+xml");
+  const isPng =
+    typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/png");
+  const isJpeg =
+    typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/jpeg");
 
-  // jsPDF supports PNG/JPEG reliably. SVG data-url may work depending on jsPDF build;
-  // if SVG doesn't render for you, we can swap fallback to a PNG generator.
   const format = isPng ? "PNG" : "JPEG";
 
   try {
-    if (isJpeg || isPng) {
+    if (isPng || isJpeg) {
       doc.addImage(imgDataUrl, format, drawImgX, drawImgY, drawImgW, drawImgH);
     } else {
-      // last resort: still try
+      // SVG fallback may fail in some setups; box still looks fine
       doc.addImage(imgDataUrl, format, drawImgX, drawImgY, drawImgW, drawImgH);
     }
   } catch {
-    // If addImage fails on SVG, just leave blank (box still looks clean)
+    // leave image box empty if svg doesn't render
   }
 
-  // ---------------- Specs box ----------------
-  const boxTop = 78; // pushed down because image is added
+  // Specs box
+  const boxTop = 78;
   doc.setDrawColor(180);
   doc.roundedRect(margin, boxTop, pageW - margin * 2, 34, 3, 3);
 
@@ -241,7 +234,7 @@ async function downloadProductPdf(p) {
   doc.text(`MOQ: ${p.moqMeters} m`, midX, boxTop + 24);
   doc.text(`Lead Time: ${p.leadTimeDays} days`, midX, boxTop + 32);
 
-  // ---------------- Suitable for ----------------
+  // Suitable for
   const suitable = (p.usage || []).join(", ") || "-";
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
@@ -252,7 +245,7 @@ async function downloadProductPdf(p) {
   const suitableLines = doc.splitTextToSize(suitable, pageW - margin * 2);
   doc.text(suitableLines, margin, boxTop + 61);
 
-  // ---------------- Applications ----------------
+  // Applications
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("Applications", margin, boxTop + 80);
@@ -263,7 +256,7 @@ async function downloadProductPdf(p) {
   const appsLines = doc.splitTextToSize(apps, pageW - margin * 2);
   doc.text(appsLines, margin, boxTop + 87);
 
-  // ---------------- About ----------------
+  // About
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.text("About this product", margin, boxTop + 117);
@@ -273,7 +266,7 @@ async function downloadProductPdf(p) {
   const aboutLines = doc.splitTextToSize(p.long || "-", pageW - margin * 2);
   doc.text(aboutLines, margin, boxTop + 124);
 
-  // ---------------- Footer ----------------
+  // Footer
   doc.setFontSize(9);
   doc.setTextColor(120);
   doc.text(
@@ -285,7 +278,6 @@ async function downloadProductPdf(p) {
   doc.save(`${p.id}.pdf`);
 }
 
-
 /* ------------------------------ UI ------------------------------ */
 function Header() {
   return (
@@ -294,13 +286,10 @@ function Header() {
         <div className="brandMark">AGE</div>
         <div>
           <div className="brandName">Amrita Global Enterprises</div>
-         
         </div>
       </div>
 
-      <div className="headerRight">
-        
-      </div>
+      <div className="headerRight"></div>
     </div>
   );
 }
@@ -374,17 +363,13 @@ function CataloguePage() {
             </button>
           ) : null}
         </div>
-
-        
       </div>
 
       <div className="summary">
         <div className="count">
           Showing <b>{filtered.length}</b> of <b>{PRODUCTS.length}</b> products
         </div>
-        <div className="note">
-          Tip: try “AGE-”, “Denim”, “Twill”, “Best Seller”
-        </div>
+        <div className="note">Tip: try “AGE-”, “Denim”, “Twill”, “Best Seller”</div>
       </div>
 
       <div className="grid">
@@ -473,13 +458,18 @@ function ProductDetailsPage() {
         </div>
         <div className="emptyState">
           <div className="emptyTitle">Product not found</div>
-          <div className="emptyText">
-            This product code doesn’t exist in static data.
-          </div>
+          <div className="emptyText">This product code doesn’t exist in static data.</div>
         </div>
       </div>
     );
   }
+
+  // ✅ URL for QR (opens same product page)
+ const baseUrl =
+  import.meta.env.VITE_FRONTEND_URL?.trim() || window.location.origin;
+
+const productUrl = `${baseUrl}/product/${p.id}`;
+
 
   return (
     <div className="app">
@@ -488,7 +478,6 @@ function ProductDetailsPage() {
           ← Back to Catalogue
         </button>
 
-        {/* ✅ PDF Button */}
         <button className="pdfBtn" onClick={() => downloadProductPdf(p)}>
           Download PDF
         </button>
@@ -504,6 +493,13 @@ function ProductDetailsPage() {
               e.currentTarget.src = fallbackImageSvg(p.id);
             }}
           />
+
+          {/* ✅ QR under image (nice placement) */}
+          <div className="qrWrap">
+            <div className="qrTitle">Scan to open this product</div>
+            <QRCodeCanvas value={productUrl} size={120} includeMargin />
+            <div className="qrSmall">{p.id}</div>
+          </div>
         </div>
 
         <div className="detailsInfo">
@@ -588,7 +584,8 @@ function ProductDetailsPage() {
           </div>
 
           <div className="callout">
-            For pricing, stock, or sampling: contact sales/admin team (this app is catalogue-only).
+            For pricing, stock, or sampling: contact sales/admin team (this app is
+            catalogue-only).
           </div>
         </div>
       </div>
