@@ -447,6 +447,7 @@ function ProductDetailsPage() {
   const nav = useNavigate();
 
   const p = useMemo(() => PRODUCTS.find((x) => x.id === id), [id]);
+  const [qrOpen, setQrOpen] = useState(false);
 
   if (!p) {
     return (
@@ -458,18 +459,17 @@ function ProductDetailsPage() {
         </div>
         <div className="emptyState">
           <div className="emptyTitle">Product not found</div>
-          <div className="emptyText">This product code doesn’t exist in static data.</div>
+          <div className="emptyText">
+            This product code doesn’t exist in static data.
+          </div>
         </div>
       </div>
     );
   }
 
-  // ✅ URL for QR (opens same product page)
- const baseUrl =
-  import.meta.env.VITE_FRONTEND_URL?.trim() || window.location.origin;
-
-const productUrl = `${baseUrl}/product/${p.id}`;
-
+  // ✅ QR should point to deployed URL when on Vercel.
+  // window.location.origin is perfect after you add vercel.json rewrite.
+  const productUrl = `${window.location.origin}/product/${p.id}`;
 
   return (
     <div className="app">
@@ -478,9 +478,17 @@ const productUrl = `${baseUrl}/product/${p.id}`;
           ← Back to Catalogue
         </button>
 
-        <button className="pdfBtn" onClick={() => downloadProductPdf(p)}>
-          Download PDF
-        </button>
+        <div className="topActions">
+          {/* ✅ QR Button (left) */}
+          <button className="qrBtn" onClick={() => setQrOpen(true)}>
+            QR Code
+          </button>
+
+          {/* ✅ PDF Button (right) */}
+          <button className="pdfBtn" onClick={() => downloadProductPdf(p)}>
+            Download PDF
+          </button>
+        </div>
       </div>
 
       <div className="details">
@@ -493,13 +501,6 @@ const productUrl = `${baseUrl}/product/${p.id}`;
               e.currentTarget.src = fallbackImageSvg(p.id);
             }}
           />
-
-          {/* ✅ QR under image (nice placement) */}
-          <div className="qrWrap">
-            <div className="qrTitle">Scan to open this product</div>
-            <QRCodeCanvas value={productUrl} size={120} includeMargin />
-            <div className="qrSmall">{p.id}</div>
-          </div>
         </div>
 
         <div className="detailsInfo">
@@ -589,9 +590,35 @@ const productUrl = `${baseUrl}/product/${p.id}`;
           </div>
         </div>
       </div>
+
+      {/* ✅ BIG QR MODAL */}
+      {qrOpen && (
+        <div className="qrModalOverlay" onClick={() => setQrOpen(false)}>
+          <div className="qrModal" onClick={(e) => e.stopPropagation()}>
+            <div className="qrModalTop">
+              <div>
+                <div className="qrModalTitle">Scan to open product</div>
+                <div className="qrModalCode">{p.id}</div>
+              </div>
+              <button className="qrClose" onClick={() => setQrOpen(false)}>
+                ✕
+              </button>
+            </div>
+
+            <div className="qrBig">
+              <QRCodeCanvas value={productUrl} size={260} includeMargin />
+            </div>
+
+            <a className="qrOpenLink" href={productUrl} target="_blank" rel="noreferrer">
+              Open link
+            </a>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 /* ------------------------------ ROUTES ------------------------------ */
 export default function App() {
