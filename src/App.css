@@ -12,6 +12,13 @@
   --radius: 22px;
 }
 
+body{
+  background: var(--bg);
+  color: var(--white);
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
 .app{
   width:min(1200px, 92vw);
   margin: 24px auto 40px;
@@ -46,18 +53,8 @@
   letter-spacing:.5px;
 }
 .brandName{ font-weight: 900; font-size: 16px; }
-.brandSub{ font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 .headerRight{ display:flex; gap:10px; }
-
-.tinyTag{
-  padding: 8px 12px;
-  border-radius: 999px;
-  border:1px solid rgba(255,255,255,.14);
-  background: rgba(255,255,255,.06);
-  font-size: 12px;
-  color: rgba(255,255,255,.8);
-}
 
 /* filters */
 .filters{
@@ -96,26 +93,6 @@
   cursor:pointer;
 }
 .clearBtn:hover{ background: rgba(255,255,255,.10); }
-
-.filterRow{
-  display:grid;
-  grid-template-columns: 1fr;
-  gap:10px;
-  margin-top: 12px;
-}
-@media (min-width: 680px){
-  .filterRow{ grid-template-columns: repeat(3, 1fr); }
-}
-.select{
-  width:100%;
-  border: 1px solid rgba(255,255,255,.14);
-  background: rgba(0,0,0,.25);
-  color: #fff;
-  padding: 12px 12px;
-  border-radius: 16px;
-  outline: none;
-  cursor:pointer;
-}
 
 /* summary */
 .summary{
@@ -494,6 +471,9 @@
   margin-top:14px;
   display:flex;
   justify-content:center;
+  background: #fff;
+  padding: 10px;
+  border-radius: 16px;
 }
 
 .qrOpenLink{

@@ -129,7 +129,21 @@ async function toDataUrl(url) {
   });
 }
 
-/* -------- PDF generator for single product (same design + image) -------- */
+/* -------- QR helper for PDF: make qr PNG dataURL -------- */
+function qrDataUrl(text, size = 220) {
+  const canvas = document.createElement("canvas");
+
+  // qrcode.react provides toCanvas helper through its internal QR lib only in component,
+  // so easiest is: render a QRCodeCanvas into a temporary canvas via React? Not needed.
+  // We'll build using a hidden QRCodeCanvas below by drawing our own:
+  // BUT simplest approach: use QRCodeCanvas in DOM -> grab dataURL.
+  // We'll do it here by creating a QRCodeCanvas element in memory:
+  // (qrcode.react exposes QRCodeCanvas as a React component only, so instead we'll
+  // generate QR image from an existing canvas in the page — we do it inside downloadProductPdf.)
+  return { canvas, size };
+}
+
+/* -------- PDF generator for single product (best + image + QR + link) -------- */
 async function downloadProductPdf(p) {
   const doc = new jsPDF({
     orientation: "p",
@@ -138,30 +152,30 @@ async function downloadProductPdf(p) {
   });
 
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
 
-  const title = `${p.name}`;
-  const codeLine = `Code: ${p.id}`;
-  const metaLine = `${p.category} • ${p.weave} • ${p.finish}`;
-  const company = "Amrita Global Enterprises";
+  // URL for QR + clickable link in PDF
+  const productUrl = `${window.location.origin}/product/${p.id}`;
 
-  // Header
+  // ---------------- Header ----------------
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
-  doc.text(company, margin, 16);
+  doc.text("Amrita Global Enterprises", margin, 16);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text("Internal Product Catalogue", margin, 22);
+  doc.text("Product Catalogue Sheet", margin, 22);
 
-  doc.setDrawColor(200);
+  doc.setDrawColor(210);
   doc.line(margin, 26, pageW - margin, 26);
 
-  // Title (left) + Image (right)
+  // ---------------- Top Block: Title + Image ----------------
   const topY = 34;
 
-  const imgW = 58;
-  const imgH = 38;
+  // Image box (right)
+  const imgW = 62;
+  const imgH = 42;
   const imgX = pageW - margin - imgW;
   const imgY = topY;
 
@@ -178,18 +192,18 @@ async function downloadProductPdf(p) {
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text(title, margin, topY + 8, { maxWidth: textMaxW });
+  doc.text(p.name, margin, topY + 8, { maxWidth: textMaxW });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(codeLine, margin, topY + 16);
-  doc.text(metaLine, margin, topY + 22);
+  doc.text(`Code: ${p.id}`, margin, topY + 16);
+  doc.text(`${p.category} • ${p.weave} • ${p.finish}`, margin, topY + 22);
 
-  // Load real image; fallback if blocked
+  // Image fetch (may fail due to CORS)
   let imgDataUrl = null;
   try {
     imgDataUrl = await toDataUrl(p.image);
-  } catch (e) {
+  } catch {
     imgDataUrl = fallbackImageSvg(p.id);
   }
 
@@ -197,24 +211,22 @@ async function downloadProductPdf(p) {
     typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/png");
   const isJpeg =
     typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/jpeg");
-
-  const format = isPng ? "PNG" : "JPEG";
+  const fmt = isPng ? "PNG" : "JPEG";
 
   try {
     if (isPng || isJpeg) {
-      doc.addImage(imgDataUrl, format, drawImgX, drawImgY, drawImgW, drawImgH);
-    } else {
-      // SVG fallback may fail in some setups; box still looks fine
-      doc.addImage(imgDataUrl, format, drawImgX, drawImgY, drawImgW, drawImgH);
+      doc.addImage(imgDataUrl, fmt, drawImgX, drawImgY, drawImgW, drawImgH);
     }
   } catch {
-    // leave image box empty if svg doesn't render
+    // ignore
   }
 
-  // Specs box
-  const boxTop = 78;
+  // ---------------- Key Specs Card ----------------
+  const boxTop = 82;
+  const boxH = 44;
+
   doc.setDrawColor(180);
-  doc.roundedRect(margin, boxTop, pageW - margin * 2, 34, 3, 3);
+  doc.roundedRect(margin, boxTop, pageW - margin * 2, boxH, 3, 3);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
@@ -226,53 +238,115 @@ async function downloadProductPdf(p) {
   const leftX = margin + 4;
   const midX = margin + (pageW - margin * 2) / 2;
 
-  doc.text(`Composition: ${p.composition}`, leftX, boxTop + 16);
-  doc.text(`GSM: ${p.gsm}`, leftX, boxTop + 24);
-  doc.text(`Width: ${p.widthInch}"`, leftX, boxTop + 32);
+  doc.text(`Composition: ${p.composition}`, leftX, boxTop + 18);
+  doc.text(`GSM: ${p.gsm}`, leftX, boxTop + 28);
+  doc.text(`Width: ${p.widthInch}"`, leftX, boxTop + 38);
 
-  doc.text(`Colors: ${p.colors}`, midX, boxTop + 16);
-  doc.text(`MOQ: ${p.moqMeters} m`, midX, boxTop + 24);
-  doc.text(`Lead Time: ${p.leadTimeDays} days`, midX, boxTop + 32);
+  doc.text(`Colors: ${p.colors}`, midX, boxTop + 18);
+  doc.text(`MOQ: ${p.moqMeters} m`, midX, boxTop + 28);
+  doc.text(`Lead Time: ${p.leadTimeDays} days`, midX, boxTop + 38);
 
-  // Suitable for
-  const suitable = (p.usage || []).join(", ") || "-";
+  // ---------------- Suitable + Applications ----------------
+  const sectionY = boxTop + boxH + 16;
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text("Suitable For", margin, boxTop + 54);
+  doc.text("Suitable For", margin, sectionY);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
+  const suitable = (p.usage || []).join(", ") || "-";
   const suitableLines = doc.splitTextToSize(suitable, pageW - margin * 2);
-  doc.text(suitableLines, margin, boxTop + 61);
+  doc.text(suitableLines, margin, sectionY + 7);
 
-  // Applications
+  const appsY = sectionY + 22;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text("Applications", margin, boxTop + 80);
+  doc.text("Applications", margin, appsY);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   const apps = (p.applications || []).map((x) => `• ${x}`).join("\n") || "• -";
   const appsLines = doc.splitTextToSize(apps, pageW - margin * 2);
-  doc.text(appsLines, margin, boxTop + 87);
+  doc.text(appsLines, margin, appsY + 7);
 
-  // About
+  // ---------------- About ----------------
+  const aboutY = appsY + 32;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text("About this product", margin, boxTop + 117);
+  doc.text("About this product", margin, aboutY);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   const aboutLines = doc.splitTextToSize(p.long || "-", pageW - margin * 2);
-  doc.text(aboutLines, margin, boxTop + 124);
+  doc.text(aboutLines, margin, aboutY + 7);
+
+  // ---------------- QR block (bottom-right) ----------------
+  const qrBoxW = 55;
+  const qrBoxH = 62;
+  const qrX = pageW - margin - qrBoxW;
+  const qrY = pageH - margin - qrBoxH - 12;
+
+  doc.setDrawColor(200);
+  doc.roundedRect(qrX, qrY, qrBoxW, qrBoxH, 3, 3);
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.text("Scan to open", qrX + 4, qrY + 8);
+
+  // Create QR in DOM canvas & capture png
+  const temp = document.createElement("div");
+  temp.style.position = "fixed";
+  temp.style.left = "-99999px";
+  temp.style.top = "-99999px";
+  document.body.appendChild(temp);
+
+  // create a real canvas QR by using a minimal QR library approach:
+  // easiest: use qrcode.react directly in DOM via innerHTML? not possible.
+  // So we do: create a canvas ourselves with an embedded QR using the library already used by qrcode.react:
+  // We'll just use an <img> data url from a QRCodeCanvas already rendered in the modal? not reliable.
+  // Instead: build QR by drawing a QRCodeCanvas in a temporary React root is overkill.
+  // Practical approach: use a hidden canvas already available: we can create one using QRCodeCanvas in JSX
+  // => we'll implement below via a helper component in ProductDetailsPage and pass it into PDF.
+  // For now: We will generate QR by using a small inline SVG fallback (works as image) is tricky with jsPDF.
+  // Best reliable approach: use qrcode library. But you already installed qrcode.react; we'll use it by reading from a canvas in UI.
+  document.body.removeChild(temp);
+
+  // If we have an existing UI QR canvas, we can read it (we create it below via hidden component)
+  // We'll look for hidden canvas id:
+  const qrCanvas = document.getElementById(`qr-canvas-${p.id}`);
+  if (qrCanvas && qrCanvas.toDataURL) {
+    const qrPng = qrCanvas.toDataURL("image/png");
+    try {
+      doc.addImage(qrPng, "PNG", qrX + 6, qrY + 12, 43, 43);
+    } catch {
+      // ignore
+    }
+  } else {
+    // If not found, still OK (QR box will show, link text below)
+  }
+
+  // Clickable link text (YES it will show)
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(40, 90, 200);
+  const linkText = productUrl;
+  const linkY = qrY + qrBoxH - 4;
+
+  // print short link text (fit)
+  const short = doc.splitTextToSize(linkText, qrBoxW - 8);
+  doc.text(short, qrX + 4, linkY, { maxWidth: qrBoxW - 8 });
+
+  // Make link clickable (in PDF viewers)
+  doc.link(qrX + 4, qrY + qrBoxH - 10, qrBoxW - 8, 10, { url: productUrl });
 
   // Footer
   doc.setFontSize(9);
-  doc.setTextColor(120);
+  doc.setTextColor(130);
   doc.text(
-    `Generated from AGE Internal Catalogue • ${new Date().toLocaleString()}`,
+    `Generated • ${new Date().toLocaleString()}`,
     margin,
-    290
+    pageH - 10
   );
 
   doc.save(`${p.id}.pdf`);
@@ -288,7 +362,6 @@ function Header() {
           <div className="brandName">Amrita Global Enterprises</div>
         </div>
       </div>
-
       <div className="headerRight"></div>
     </div>
   );
@@ -297,26 +370,9 @@ function Header() {
 /* ------------------------------ PAGE 1 ------------------------------ */
 function CataloguePage() {
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("All");
-  const [usage, setUsage] = useState("All");
-  const [sort, setSort] = useState("popular");
-
-  const categories = useMemo(() => {
-    const set = new Set(PRODUCTS.map((p) => p.category));
-    return ["All", ...Array.from(set)];
-  }, []);
-
-  const usages = useMemo(() => {
-    const set = new Set(PRODUCTS.flatMap((p) => p.usage || []));
-    return ["All", ...Array.from(set)];
-  }, []);
 
   const filtered = useMemo(() => {
     let list = [...PRODUCTS];
-
-    if (category !== "All") list = list.filter((p) => p.category === category);
-    if (usage !== "All")
-      list = list.filter((p) => (p.usage || []).includes(usage));
 
     if (query.trim()) {
       const q = query.trim().toLowerCase();
@@ -335,14 +391,8 @@ function CataloguePage() {
       });
     }
 
-    if (sort === "name_asc") list.sort((a, b) => a.name.localeCompare(b.name));
-    if (sort === "gsm_desc")
-      list.sort((a, b) => (b.gsm || 0) - (a.gsm || 0));
-    if (sort === "lead_asc")
-      list.sort((a, b) => (a.leadTimeDays || 999) - (b.leadTimeDays || 999));
-
     return list;
-  }, [query, category, usage, sort]);
+  }, [query]);
 
   return (
     <div className="app">
@@ -467,24 +517,25 @@ function ProductDetailsPage() {
     );
   }
 
-  // ✅ QR should point to deployed URL when on Vercel.
-  // window.location.origin is perfect after you add vercel.json rewrite.
   const productUrl = `${window.location.origin}/product/${p.id}`;
 
   return (
     <div className="app">
+      {/* Hidden QR canvas ONLY for PDF capture */}
+      <div style={{ position: "fixed", left: "-99999px", top: "-99999px" }}>
+        <QRCodeCanvas id={`qr-canvas-${p.id}`} value={productUrl} size={220} includeMargin />
+      </div>
+
       <div className="detailsTop">
         <button className="backBtn" onClick={() => nav("/")}>
           ← Back to Catalogue
         </button>
 
         <div className="topActions">
-          {/* ✅ QR Button (left) */}
           <button className="qrBtn" onClick={() => setQrOpen(true)}>
             QR Code
           </button>
 
-          {/* ✅ PDF Button (right) */}
           <button className="pdfBtn" onClick={() => downloadProductPdf(p)}>
             Download PDF
           </button>
@@ -591,7 +642,7 @@ function ProductDetailsPage() {
         </div>
       </div>
 
-      {/* ✅ BIG QR MODAL */}
+      {/* BIG QR MODAL */}
       {qrOpen && (
         <div className="qrModalOverlay" onClick={() => setQrOpen(false)}>
           <div className="qrModal" onClick={(e) => e.stopPropagation()}>
@@ -618,7 +669,6 @@ function ProductDetailsPage() {
     </div>
   );
 }
-
 
 /* ------------------------------ ROUTES ------------------------------ */
 export default function App() {
