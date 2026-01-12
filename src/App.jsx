@@ -1,95 +1,61 @@
 // src/App.jsx
-import React, { useMemo, useState } from "react";
-import {
-  Routes,
-  Route,
-  Link,
-  useParams,
-  Navigate,
-  useNavigate,
-} from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
 import "./App.css";
 import jsPDF from "jspdf";
 import { QRCodeCanvas } from "qrcode.react";
 
-/* ------------------ STATIC DATA (later replace by API) ------------------ */
-const PRODUCTS = [
-  {
-    id: "AGE-CT-001",
-    name: "100% Cotton Twill",
-    category: "Cotton",
-    weave: "Twill",
-    finish: "Dyed",
-    composition: "100% Cotton",
-    gsm: 125,
-    widthInch: "56-57",
-    colors: 72,
-    leadTimeDays: 10,
-    moqMeters: 300,
-    tags: ["Best Seller", "Ready Stock"],
-    usage: ["Uniform", "Workwear", "Menswear"],
-    image:
-      "https://images.unsplash.com/photo-1520975958225-ff9f7ee4f983?q=80&w=1200&auto=format&fit=crop",
-    short:
-      "Premium dyed cotton twill with consistent shade. Ideal for uniforms and durable garments.",
-    long:
-      "Our cotton twill is dyed in excellent color depth with consistent shade matching. Suitable for daily-wear garments, uniforms, and workwear. Available in wide shade range and flexible packing.",
-    packing: "Bale / Roll (as available)",
-    applications: ["Pants", "Uniforms", "Jackets", "Workwear"],
-  },
-  {
-    id: "AGE-DN-011",
-    name: "Indigo Denim 5.5 oz",
-    category: "Denim",
-    weave: "Denim",
-    finish: "Rinse",
-    composition: "100% Cotton",
-    gsm: 187,
-    widthInch: "58-59",
-    colors: 8,
-    leadTimeDays: 15,
-    moqMeters: 500,
-    tags: ["Trending", "Premium"],
-    usage: ["Menswear", "Womenswear"],
-    image:
-      "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?q=80&w=1200&auto=format&fit=crop",
-    short:
-      "Lightweight indigo denim for shirts & summer denim wear. Smooth hand-feel.",
-    long:
-      "A breathable 5.5 oz indigo denim designed for comfort and movement. Ideal for casual shirts, light jackets, and premium summer denim programs.",
-    packing: "Roll",
-    applications: ["Shirts", "Light Jackets", "Summer Denim"],
-  },
-  {
-    id: "AGE-PC-007",
-    name: "Poly Cotton Poplin",
-    category: "Blend",
-    weave: "Poplin",
-    finish: "Soft Finish",
-    composition: "65% Polyester / 35% Cotton",
-    gsm: 110,
-    widthInch: "57-58",
-    colors: 36,
-    leadTimeDays: 12,
-    moqMeters: 400,
-    tags: ["Value", "Easy Care"],
-    usage: ["Shirting", "Uniform"],
-    image:
-      "https://images.unsplash.com/photo-1527576539890-dfa815648363?q=80&w=1200&auto=format&fit=crop",
-    short:
-      "Easy-care poplin for uniforms & daily shirting. Crisp look, low maintenance.",
-    long:
-      "Balanced poly-cotton poplin with a crisp appearance and soft finish. Excellent for uniforms and bulk programs that need easy wash-care and durability.",
-    packing: "Roll",
-    applications: ["Uniform Shirts", "Corporate Wear", "School Uniforms"],
-  },
-];
+/* ------------------------------ ENV ------------------------------ */
+const FRONTEND_URL = String(import.meta.env.VITE_FRONTEND_URL || "").replace(/\/$/, "");
+const ESPO_ENTITY_URL = String(import.meta.env.VITE_ESPO_BASEURL || "").replace(/\/$/, ""); // /CProduct
+const ESPO_API_KEY = String(import.meta.env.VITE_X_API_KEY || "");
+
+/* ------------------------------ THEME ------------------------------ */
+const THEME_KEY = "age_theme";
+function getInitialTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+
+  const prefersLight =
+    window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+  return prefersLight ? "light" : "dark";
+}
 
 /* ------------------------------ helpers ------------------------------ */
 function textIncludes(haystack, needle) {
-  return String(haystack || "")
-    .toLowerCase()
-    .includes(String(needle || "").toLowerCase());
+  return String(haystack || "").toLowerCase().includes(String(needle || "").toLowerCase());
+}
+
+function safeJoin(val, sep = ", ") {
+  if (Array.isArray(val)) return val.filter(Boolean).join(sep);
+  if (val === null || val === undefined) return "";
+  return String(val);
+}
+
+function firstNonEmpty(...vals) {
+  for (const v of vals) {
+    if (Array.isArray(v)) {
+      const s = v.filter(Boolean).join(", ");
+      if (s) return s;
+    } else if (typeof v === "string") {
+      if (v.trim()) return v.trim();
+    } else if (v !== null && v !== undefined) {
+      return String(v);
+    }
+  }
+  return "";
+}
+
+function isNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n);
+}
+function fmtNum(v, decimals = 2) {
+  if (!isNum(v)) return "";
+  const n = Number(v);
+  const r = Math.round(n);
+  if (Math.abs(n - r) < 1e-6) return String(r);
+  return n.toFixed(decimals).replace(/\.?0+$/, "");
 }
 
 function fallbackImageSvg(text = "AGE") {
@@ -115,7 +81,176 @@ function fallbackImageSvg(text = "AGE") {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-/* -------- image helper: url -> dataURL (works for PDF) -------- */
+function getPrimaryImage(p) {
+  return firstNonEmpty(
+    p?.image1CloudUrl,
+    p?.image1ThumbUrl,
+    p?.image2CloudUrl,
+    p?.image2ThumbUrl,
+    p?.image3CloudUrl,
+    p?.image3ThumbUrl
+  );
+}
+
+function getDisplayCode(p) {
+  return firstNonEmpty(p?.fabricCode, p?.vendorFabricCode, p?.productslug, p?.name, p?.id);
+}
+
+function getComposition(p) {
+  return firstNonEmpty(safeJoin(p?.content), p?.composition);
+}
+function getFinish(p) {
+  return firstNonEmpty(safeJoin(p?.finish), p?.finish);
+}
+function getStructure(p) {
+  return firstNonEmpty(p?.structure, p?.weave);
+}
+
+function getColorsCount(p) {
+  if (typeof p?.colors === "number") return p.colors > 0 ? String(p.colors) : "-";
+  if (Array.isArray(p?.color)) return p.color.length > 0 ? String(p.color.length) : "-";
+  return "-";
+}
+
+function getWidthText(p) {
+  const cm = p?.cm;
+  const inch = p?.inch;
+  if (isNum(cm) && isNum(inch)) return `${fmtNum(cm, 0)} cm (${fmtNum(inch, 2)}")`;
+  if (isNum(inch)) return `${fmtNum(inch, 2)}"`;
+  if (isNum(cm)) return `${fmtNum(cm, 0)} cm`;
+  return "-";
+}
+
+function getShortDesc(p) {
+  return firstNonEmpty(
+    p?.shortProductDescription,
+    p?.productTagline,
+    p?.description && stripHtml(p.description).slice(0, 140)
+  );
+}
+
+function stripHtml(html) {
+  try {
+    const div = document.createElement("div");
+    div.innerHTML = String(html || "");
+    return (div.textContent || div.innerText || "").trim();
+  } catch {
+    return String(html || "");
+  }
+}
+
+/* Safer HTML rendering (removes script/style + inline on* attrs + javascript: links) */
+function safeHtml(html) {
+  try {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    doc.querySelectorAll("script,style").forEach((n) => n.remove());
+
+    doc.querySelectorAll("*").forEach((el) => {
+      [...el.attributes].forEach((a) => {
+        const name = a.name.toLowerCase();
+        const val = String(a.value || "");
+        if (name.startsWith("on")) el.removeAttribute(a.name);
+        if ((name === "href" || name === "src") && val.trim().toLowerCase().startsWith("javascript:"))
+          el.removeAttribute(a.name);
+      });
+    });
+
+    return doc.body.innerHTML || "";
+  } catch {
+    return "";
+  }
+}
+
+function filterTags(tags) {
+  const arr = Array.isArray(tags) ? tags : [];
+  return arr
+    .filter(Boolean)
+    .filter((t) => String(t).trim().toLowerCase() !== "draft"); // remove Draft everywhere
+}
+
+function parseSuitabilityLine(line) {
+  const raw = String(line || "").trim();
+  if (!raw) return null;
+
+  // split on "|" and clean
+  const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
+
+  if (parts.length >= 3) {
+    return { a: parts[0], b: parts[1], c: parts.slice(2).join(" - ") };
+  }
+  // fallback: just replace | with -
+  return { a: raw.replace(/\s*\|\s*/g, " - "), b: "", c: "" };
+}
+
+function getFaqList(p) {
+  const items = [];
+  for (let i = 1; i <= 6; i++) {
+    const q = p?.[`productQ${i}`];
+    const a = p?.[`productA${i}`];
+    if (q && a) items.push({ q: String(q).trim(), a: String(a).trim() });
+  }
+  return items;
+}
+
+/* ------------------------------ API ------------------------------ */
+async function espoFetchJson(url) {
+  const res = await fetch(url, {
+    method: "GET",
+    headers: { Accept: "application/json", "X-Api-Key": ESPO_API_KEY },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}: ${text || "Request failed"}`);
+  }
+  return res.json();
+}
+
+async function fetchAllProducts() {
+  if (!ESPO_ENTITY_URL) throw new Error("VITE_ESPO_BASEURL is missing");
+  if (!ESPO_API_KEY) throw new Error("VITE_X_API_KEY is missing");
+
+  const pageSize = 200;
+  let offset = 0;
+  let all = [];
+  let total = Infinity;
+
+  while (offset < total) {
+    const u = new URL(ESPO_ENTITY_URL);
+    u.searchParams.set("maxSize", String(pageSize));
+    u.searchParams.set("offset", String(offset));
+    u.searchParams.set("sortBy", "modifiedAt");
+    u.searchParams.set("asc", "false");
+
+    const json = await espoFetchJson(u.toString());
+
+    const list = Array.isArray(json?.list)
+      ? json.list
+      : Array.isArray(json?.data)
+      ? json.data
+      : Array.isArray(json)
+      ? json
+      : [];
+
+    const pageTotal =
+      typeof json?.total === "number"
+        ? json.total
+        : typeof json?.count === "number"
+        ? json.count
+        : list.length;
+
+    total = pageTotal === 0 ? 0 : pageTotal;
+    all = all.concat(list);
+    offset += list.length;
+
+    if (list.length === 0) break;
+    if (!Number.isFinite(total)) break;
+  }
+
+  return all.filter((p) => p?.deleted !== true);
+}
+
+/* ------------------------------ PDF ------------------------------ */
 async function toDataUrl(url) {
   const res = await fetch(url, { mode: "cors" });
   if (!res.ok) throw new Error("Image fetch failed");
@@ -129,51 +264,32 @@ async function toDataUrl(url) {
   });
 }
 
-/* -------- QR helper for PDF: make qr PNG dataURL -------- */
-function qrDataUrl(text, size = 220) {
-  const canvas = document.createElement("canvas");
-
-  // qrcode.react provides toCanvas helper through its internal QR lib only in component,
-  // so easiest is: render a QRCodeCanvas into a temporary canvas via React? Not needed.
-  // We'll build using a hidden QRCodeCanvas below by drawing our own:
-  // BUT simplest approach: use QRCodeCanvas in DOM -> grab dataURL.
-  // We'll do it here by creating a QRCodeCanvas element in memory:
-  // (qrcode.react exposes QRCodeCanvas as a React component only, so instead we'll
-  // generate QR image from an existing canvas in the page — we do it inside downloadProductPdf.)
-  return { canvas, size };
-}
-
-/* -------- PDF generator for single product (best + image + QR + link) -------- */
 async function downloadProductPdf(p) {
-  const doc = new jsPDF({
-    orientation: "p",
-    unit: "mm",
-    format: "a4",
-  });
+  const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
 
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 14;
 
-  // URL for QR + clickable link in PDF
-  const productUrl = `${window.location.origin}/product/${p.id}`;
+  const base = FRONTEND_URL || window.location.origin;
+  const productUrl = `${base.replace(/\/$/, "")}/product/${p.id}`;
 
-  // ---------------- Header ----------------
+  const code = getDisplayCode(p);
+  const title = firstNonEmpty(p?.productTitle, p?.name, code);
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.text("Amrita Global Enterprises", margin, 16);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text("Product Catalogue Sheet", margin, 22);
+  doc.text("Product Sheet (Auto Generated)", margin, 22);
 
   doc.setDrawColor(210);
   doc.line(margin, 26, pageW - margin, 26);
 
-  // ---------------- Top Block: Title + Image ----------------
   const topY = 34;
 
-  // Image box (right)
   const imgW = 62;
   const imgH = 42;
   const imgX = pageW - margin - imgW;
@@ -192,38 +308,35 @@ async function downloadProductPdf(p) {
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(15);
-  doc.text(p.name, margin, topY + 8, { maxWidth: textMaxW });
+  doc.text(title, margin, topY + 8, { maxWidth: textMaxW });
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.text(`Code: ${p.id}`, margin, topY + 16);
-  doc.text(`${p.category} • ${p.weave} • ${p.finish}`, margin, topY + 22);
+  doc.text(`Code: ${code}`, margin, topY + 16);
 
-  // Image fetch (may fail due to CORS)
+  const imgUrl = getPrimaryImage(p);
   let imgDataUrl = null;
+
   try {
-    imgDataUrl = await toDataUrl(p.image);
+    if (imgUrl) imgDataUrl = await toDataUrl(imgUrl);
   } catch {
-    imgDataUrl = fallbackImageSvg(p.id);
+    imgDataUrl = null;
   }
 
-  const isPng =
-    typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/png");
-  const isJpeg =
-    typeof imgDataUrl === "string" && imgDataUrl.startsWith("data:image/jpeg");
-  const fmt = isPng ? "PNG" : "JPEG";
+  if (imgDataUrl && typeof imgDataUrl === "string") {
+    const isPng = imgDataUrl.startsWith("data:image/png");
+    const isJpeg = imgDataUrl.startsWith("data:image/jpeg");
+    const fmt = isPng ? "PNG" : isJpeg ? "JPEG" : null;
 
-  try {
-    if (isPng || isJpeg) {
-      doc.addImage(imgDataUrl, fmt, drawImgX, drawImgY, drawImgW, drawImgH);
+    if (fmt) {
+      try {
+        doc.addImage(imgDataUrl, fmt, drawImgX, drawImgY, drawImgW, drawImgH);
+      } catch {}
     }
-  } catch {
-    // ignore
   }
 
-  // ---------------- Key Specs Card ----------------
   const boxTop = 82;
-  const boxH = 44;
+  const boxH = 52;
 
   doc.setDrawColor(180);
   doc.roundedRect(margin, boxTop, pageW - margin * 2, boxH, 3, 3);
@@ -238,50 +351,30 @@ async function downloadProductPdf(p) {
   const leftX = margin + 4;
   const midX = margin + (pageW - margin * 2) / 2;
 
-  doc.text(`Composition: ${p.composition}`, leftX, boxTop + 18);
-  doc.text(`GSM: ${p.gsm}`, leftX, boxTop + 28);
-  doc.text(`Width: ${p.widthInch}"`, leftX, boxTop + 38);
+  doc.text(`Composition: ${firstNonEmpty(getComposition(p), "-")}`, leftX, boxTop + 18);
+  doc.text(`GSM: ${firstNonEmpty(fmtNum(p?.gsm, 2), "-")}`, leftX, boxTop + 28);
+  doc.text(`Width: ${getWidthText(p)}`, leftX, boxTop + 38);
+  doc.text(`Finish: ${firstNonEmpty(getFinish(p), "-")}`, leftX, boxTop + 48, {
+    maxWidth: (pageW - margin * 2) / 2 - 6,
+  });
 
-  doc.text(`Colors: ${p.colors}`, midX, boxTop + 18);
-  doc.text(`MOQ: ${p.moqMeters} m`, midX, boxTop + 28);
-  doc.text(`Lead Time: ${p.leadTimeDays} days`, midX, boxTop + 38);
+  doc.text(`Color: ${firstNonEmpty(safeJoin(p?.color), "-")}`, midX, boxTop + 18);
+  doc.text(`MOQ: ${firstNonEmpty(fmtNum(p?.salesMOQ, 0), "-")}`, midX, boxTop + 28);
+  doc.text(`Supply: ${firstNonEmpty(p?.supplyModel, "-")}`, midX, boxTop + 38);
+  doc.text(`Collection: ${firstNonEmpty(p?.collectionName, p?.collection?.name, "-")}`, midX, boxTop + 48, {
+    maxWidth: (pageW - margin * 2) / 2 - 6,
+  });
 
-  // ---------------- Suitable + Applications ----------------
-  const sectionY = boxTop + boxH + 16;
-
+  const aboutY = boxTop + boxH + 16;
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
-  doc.text("Suitable For", margin, sectionY);
+  doc.text("About", margin, aboutY);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  const suitable = (p.usage || []).join(", ") || "-";
-  const suitableLines = doc.splitTextToSize(suitable, pageW - margin * 2);
-  doc.text(suitableLines, margin, sectionY + 7);
+  const about = firstNonEmpty(stripHtml(p?.fullProductDescription), stripHtml(p?.description), p?.shortProductDescription, "-");
+  doc.text(doc.splitTextToSize(about, pageW - margin * 2), margin, aboutY + 7);
 
-  const appsY = sectionY + 22;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("Applications", margin, appsY);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  const apps = (p.applications || []).map((x) => `• ${x}`).join("\n") || "• -";
-  const appsLines = doc.splitTextToSize(apps, pageW - margin * 2);
-  doc.text(appsLines, margin, appsY + 7);
-
-  // ---------------- About ----------------
-  const aboutY = appsY + 32;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.text("About this product", margin, aboutY);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  const aboutLines = doc.splitTextToSize(p.long || "-", pageW - margin * 2);
-  doc.text(aboutLines, margin, aboutY + 7);
-
-  // ---------------- QR block (bottom-right) ----------------
   const qrBoxW = 55;
   const qrBoxH = 62;
   const qrX = pageW - margin - qrBoxW;
@@ -292,68 +385,34 @@ async function downloadProductPdf(p) {
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10);
+  doc.setTextColor(0);
   doc.text("Scan to open", qrX + 4, qrY + 8);
 
-  // Create QR in DOM canvas & capture png
-  const temp = document.createElement("div");
-  temp.style.position = "fixed";
-  temp.style.left = "-99999px";
-  temp.style.top = "-99999px";
-  document.body.appendChild(temp);
-
-  // create a real canvas QR by using a minimal QR library approach:
-  // easiest: use qrcode.react directly in DOM via innerHTML? not possible.
-  // So we do: create a canvas ourselves with an embedded QR using the library already used by qrcode.react:
-  // We'll just use an <img> data url from a QRCodeCanvas already rendered in the modal? not reliable.
-  // Instead: build QR by drawing a QRCodeCanvas in a temporary React root is overkill.
-  // Practical approach: use a hidden canvas already available: we can create one using QRCodeCanvas in JSX
-  // => we'll implement below via a helper component in ProductDetailsPage and pass it into PDF.
-  // For now: We will generate QR by using a small inline SVG fallback (works as image) is tricky with jsPDF.
-  // Best reliable approach: use qrcode library. But you already installed qrcode.react; we'll use it by reading from a canvas in UI.
-  document.body.removeChild(temp);
-
-  // If we have an existing UI QR canvas, we can read it (we create it below via hidden component)
-  // We'll look for hidden canvas id:
   const qrCanvas = document.getElementById(`qr-canvas-${p.id}`);
   if (qrCanvas && qrCanvas.toDataURL) {
     const qrPng = qrCanvas.toDataURL("image/png");
     try {
       doc.addImage(qrPng, "PNG", qrX + 6, qrY + 12, 43, 43);
-    } catch {
-      // ignore
-    }
-  } else {
-    // If not found, still OK (QR box will show, link text below)
+    } catch {}
   }
 
-  // Clickable link text (YES it will show)
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(40, 90, 200);
-  const linkText = productUrl;
-  const linkY = qrY + qrBoxH - 4;
-
-  // print short link text (fit)
-  const short = doc.splitTextToSize(linkText, qrBoxW - 8);
-  doc.text(short, qrX + 4, linkY, { maxWidth: qrBoxW - 8 });
-
-  // Make link clickable (in PDF viewers)
+  const shortLink = doc.splitTextToSize(productUrl, qrBoxW - 8);
+  doc.text(shortLink, qrX + 4, qrY + qrBoxH - 4, { maxWidth: qrBoxW - 8 });
   doc.link(qrX + 4, qrY + qrBoxH - 10, qrBoxW - 8, 10, { url: productUrl });
 
-  // Footer
   doc.setFontSize(9);
   doc.setTextColor(130);
-  doc.text(
-    `Generated • ${new Date().toLocaleString()}`,
-    margin,
-    pageH - 10
-  );
+  doc.text(`Generated • ${new Date().toLocaleString()}`, margin, pageH - 10);
 
-  doc.save(`${p.id}.pdf`);
+  doc.save(`${code}.pdf`);
 }
 
 /* ------------------------------ UI ------------------------------ */
-function Header() {
+function Header({ theme, onToggleTheme }) {
+  const isLight = theme === "light";
   return (
     <div className="header">
       <div className="brand">
@@ -362,41 +421,73 @@ function Header() {
           <div className="brandName">Amrita Global Enterprises</div>
         </div>
       </div>
-      <div className="headerRight"></div>
+
+     
     </div>
   );
 }
 
+/* ------------------------------ DATA HOOK ------------------------------ */
+function useProducts() {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const reload = async () => {
+    setError("");
+    setLoading(true);
+    try {
+      const all = await fetchAllProducts();
+      setProducts(all);
+    } catch (e) {
+      setError(e?.message || "Failed to load products");
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return { products, loading, error, reload };
+}
+
 /* ------------------------------ PAGE 1 ------------------------------ */
-function CataloguePage() {
+function CataloguePage({ products, loading, error, reload, theme, onToggleTheme }) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
-    let list = [...PRODUCTS];
+    const q = query.trim().toLowerCase();
+    if (!q) return products;
 
-    if (query.trim()) {
-      const q = query.trim().toLowerCase();
-      list = list.filter((p) => {
-        const blob = [
-          p.id,
-          p.name,
-          p.category,
-          p.weave,
-          p.finish,
-          p.composition,
-          ...(p.tags || []),
-          ...(p.usage || []),
-        ].join(" ");
-        return textIncludes(blob, q);
-      });
-    }
-
-    return list;
-  }, [query]);
+    return products.filter((p) => {
+      const blob = [
+        p.id,
+        p.name,
+        p.productTitle,
+        p.productTagline,
+        p.category,
+        p.structure,
+        p.design,
+        safeJoin(p.content),
+        safeJoin(p.color),
+        safeJoin(p.finish),
+        p.fabricCode,
+        p.vendorFabricCode,
+        p.productslug,
+        p.collectionName,
+        safeJoin(p.merchTags),
+      ].join(" ");
+      return textIncludes(blob, q);
+    });
+  }, [products, query]);
 
   return (
     <div className="app">
-      <Header />
+      <Header theme={theme} onToggleTheme={onToggleTheme} />
 
       <div className="filters">
         <div className="searchWrap">
@@ -405,7 +496,7 @@ function CataloguePage() {
             className="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name, code, category, weave, tags..."
+            placeholder="Search by name, code, category, weave/structure, tags..."
           />
           {query ? (
             <button className="clearBtn" onClick={() => setQuery("")}>
@@ -415,93 +506,150 @@ function CataloguePage() {
         </div>
       </div>
 
-      <div className="summary">
-        <div className="count">
-          Showing <b>{filtered.length}</b> of <b>{PRODUCTS.length}</b> products
+      {loading ? (
+        <div className="loadingBox">Loading products…</div>
+      ) : error ? (
+        <div className="errorBox">
+          <div className="errorTitle">Couldn’t load products</div>
+          <div className="errorText">{error}</div>
+          <button className="retryBtn" onClick={reload}>
+            Retry
+          </button>
         </div>
-        <div className="note">Tip: try “AGE-”, “Denim”, “Twill”, “Best Seller”</div>
-      </div>
-
-      <div className="grid">
-        {filtered.map((p) => (
-          <Link key={p.id} to={`/product/${p.id}`} className="card">
-            <div className="cardMedia">
-              <img
-                src={p.image}
-                alt={p.name}
-                loading="lazy"
-                onError={(e) => {
-                  e.currentTarget.onerror = null;
-                  e.currentTarget.src = fallbackImageSvg(p.id);
-                }}
-              />
-              <div className="codeBadge">{p.id}</div>
+      ) : (
+        <>
+          <div className="summary">
+            <div className="count">
+              Showing <b>{filtered.length}</b> of <b>{products.length}</b> products
             </div>
+            <div className="note">Tip: try “camel”, “poplin”, “mercerized”, “ecatalogue”</div>
+          </div>
 
-            <div className="cardBody">
-              <div className="cardTop">
-                <div className="title">{p.name}</div>
-                <div className="meta">
-                  {p.category} • {p.weave}
-                </div>
-              </div>
+          <div className="grid">
+            {filtered.map((p) => {
+              const img = getPrimaryImage(p) || fallbackImageSvg(getDisplayCode(p));
+              const code = getDisplayCode(p);
 
-              <div className="desc">{p.short}</div>
+              const tags = filterTags(p.merchTags).slice(0, 2); // ✅ Draft removed
 
-              <div className="specs">
-                <div className="spec">
-                  <div className="k">GSM</div>
-                  <div className="v">{p.gsm}</div>
-                </div>
-                <div className="spec">
-                  <div className="k">Width</div>
-                  <div className="v">{p.widthInch}"</div>
-                </div>
-                <div className="spec">
-                  <div className="k">Colors</div>
-                  <div className="v">{p.colors}</div>
-                </div>
-                <div className="spec">
-                  <div className="k">Lead</div>
-                  <div className="v">{p.leadTimeDays}d</div>
-                </div>
-              </div>
+              return (
+                <Link key={p.id} to={`/product/${p.id}`} className="card">
+                  <div className="cardMedia">
+                    <img
+                      src={img}
+                      alt={p.name || code}
+                      loading="lazy"
+                      onError={(e) => {
+                        e.currentTarget.onerror = null;
+                        e.currentTarget.src = fallbackImageSvg(code);
+                      }}
+                    />
+                    <div className="codeBadge">{code}</div>
+                  </div>
 
-              <div className="chips">
-                {(p.tags || []).slice(0, 2).map((t) => (
-                  <span key={t} className="chip" title={t}>
-                    {t}
-                  </span>
-                ))}
-              </div>
+                  <div className="cardBody">
+                    <div className="cardTop">
+                      <div className="title">{firstNonEmpty(p.productTitle, p.name, code)}</div>
+                      <div className="meta">
+                        {firstNonEmpty(p.category, "-")} • {firstNonEmpty(getStructure(p), "-")}
+                      </div>
+                    </div>
 
-              <div className="ctaRow">
-                <span className="cta">View details →</span>
-                <span className="hint">Catalogue</span>
-              </div>
-            </div>
-          </Link>
-        ))}
-      </div>
+                    <div className="desc">{getShortDesc(p) || "-"}</div>
 
-      <div className="footer">
-        © {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue
-      </div>
+                    <div className="specs">
+                      <div className="spec">
+                        <div className="k">GSM</div>
+                        <div className="v">{firstNonEmpty(fmtNum(p.gsm, 2), "-")}</div>
+                      </div>
+                      <div className="spec">
+                        <div className="k">Width</div>
+                        <div className="v">
+                          {firstNonEmpty(
+                            isNum(p.inch) ? `${fmtNum(p.inch, 2)}"` : "",
+                            isNum(p.cm) ? `${fmtNum(p.cm, 0)}cm` : "",
+                            "-"
+                          )}
+                        </div>
+                      </div>
+                      <div className="spec">
+                        <div className="k">Colors</div>
+                        <div className="v">{getColorsCount(p)}</div>
+                      </div>
+                      <div className="spec">
+                        <div className="k">MOQ</div>
+                        <div className="v">{firstNonEmpty(fmtNum(p.salesMOQ, 0), "-")}</div>
+                      </div>
+                    </div>
+
+                    {/* ✅ No Draft chip here */}
+                    {tags.length > 0 && (
+                      <div className="chips">
+                        {tags.map((t) => (
+                          <span key={t} className="chip" title={t}>
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="ctaRow">
+                      <span className="cta">View details →</span>
+                      <span className="hint">Catalogue</span>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div className="footer">© {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue</div>
+    </div>
+  );
+}
+
+/* ------------------------------ FAQ Item ------------------------------ */
+function FaqItem({ q, a }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`faqItem ${open ? "open" : ""}`}>
+      <button className="faqQ" onClick={() => setOpen((v) => !v)} type="button">
+        <span>{q}</span>
+        <span className="faqIcon">{open ? "–" : "+"}</span>
+      </button>
+      {open && <div className="faqA">{a}</div>}
     </div>
   );
 }
 
 /* ------------------------------ PAGE 2 ------------------------------ */
-function ProductDetailsPage() {
+function ProductDetailsPage({ products, loading, theme, onToggleTheme }) {
   const { id } = useParams();
   const nav = useNavigate();
 
-  const p = useMemo(() => PRODUCTS.find((x) => x.id === id), [id]);
+  const p = useMemo(() => products.find((x) => x.id === id), [products, id]);
   const [qrOpen, setQrOpen] = useState(false);
+
+  if (loading) {
+    return (
+      <div className="app">
+        <Header theme={theme} onToggleTheme={onToggleTheme} />
+        <div className="detailsTop">
+          <button className="backBtn" onClick={() => nav("/")}>
+            ← Back
+          </button>
+        </div>
+        <div className="loadingBox">Loading product…</div>
+      </div>
+    );
+  }
 
   if (!p) {
     return (
       <div className="app">
+        <Header theme={theme} onToggleTheme={onToggleTheme} />
         <div className="detailsTop">
           <button className="backBtn" onClick={() => nav("/")}>
             ← Back
@@ -509,18 +657,28 @@ function ProductDetailsPage() {
         </div>
         <div className="emptyState">
           <div className="emptyTitle">Product not found</div>
-          <div className="emptyText">
-            This product code doesn’t exist in static data.
-          </div>
+          <div className="emptyText">This product id doesn’t exist in your CProduct list.</div>
         </div>
       </div>
     );
   }
 
-  const productUrl = `${window.location.origin}/product/${p.id}`;
+  const base = FRONTEND_URL || window.location.origin;
+  const productUrl = `${base.replace(/\/$/, "")}/product/${p.id}`;
+  const code = getDisplayCode(p);
+  const img = getPrimaryImage(p) || fallbackImageSvg(code);
+
+  const tags = filterTags(p.merchTags); // ✅ Draft removed
+  const suitabilityRows = (p.suitability || []).map(parseSuitabilityLine).filter(Boolean);
+  const faq = getFaqList(p);
+
+  const aboutHtml = firstNonEmpty(p.fullProductDescription, p.description, "");
+  const aboutFallback = firstNonEmpty(stripHtml(p.fullProductDescription), stripHtml(p.description), p.shortProductDescription, "-");
 
   return (
     <div className="app">
+      <Header theme={theme} onToggleTheme={onToggleTheme} />
+
       {/* Hidden QR canvas ONLY for PDF capture */}
       <div style={{ position: "fixed", left: "-99999px", top: "-99999px" }}>
         <QRCodeCanvas id={`qr-canvas-${p.id}`} value={productUrl} size={220} includeMargin />
@@ -545,11 +703,11 @@ function ProductDetailsPage() {
       <div className="details">
         <div className="detailsMedia">
           <img
-            src={p.image}
-            alt={p.name}
+            src={img}
+            alt={p.name || code}
             onError={(e) => {
               e.currentTarget.onerror = null;
-              e.currentTarget.src = fallbackImageSvg(p.id);
+              e.currentTarget.src = fallbackImageSvg(code);
             }}
           />
         </div>
@@ -557,88 +715,131 @@ function ProductDetailsPage() {
         <div className="detailsInfo">
           <div className="detailsHeader">
             <div>
-              <div className="detailsCode">{p.id}</div>
-              <div className="detailsName">{p.name}</div>
+              <div className="detailsCode">{code}</div>
+              <div className="detailsName">{firstNonEmpty(p.productTitle, p.name, code)}</div>
               <div className="detailsMeta">
-                {p.category} • {p.weave} • {p.finish}
+                {firstNonEmpty(p.category, "-")} • {firstNonEmpty(getStructure(p), "-")} • {firstNonEmpty(p.design, "-")}
               </div>
+
+              {firstNonEmpty(p.productTagline, "") && (
+                <div className="detailsTagline">{p.productTagline}</div>
+              )}
             </div>
 
-            <div className="chips right">
-              {(p.tags || []).map((t) => (
-                <span key={t} className="chip" title={t}>
-                  {t}
-                </span>
-              ))}
-            </div>
+            {/* ✅ No Draft anywhere */}
+            {tags.length > 0 && (
+              <div className="chips right">
+                {tags.slice(0, 6).map((t) => (
+                  <span key={t} className="chip" title={t}>
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="detailGrid">
             <div className="kv">
               <div className="k">Composition</div>
-              <div className="v">{p.composition}</div>
+              <div className="v">{firstNonEmpty(getComposition(p), "-")}</div>
             </div>
             <div className="kv">
               <div className="k">GSM</div>
-              <div className="v">{p.gsm}</div>
+              <div className="v">{firstNonEmpty(fmtNum(p.gsm, 2), "-")}</div>
             </div>
             <div className="kv">
               <div className="k">Width</div>
-              <div className="v">{p.widthInch}"</div>
+              <div className="v">{getWidthText(p)}</div>
             </div>
             <div className="kv">
-              <div className="k">Colors</div>
-              <div className="v">{p.colors}</div>
+              <div className="k">Color</div>
+              <div className="v">{firstNonEmpty(safeJoin(p.color), "-")}</div>
+            </div>
+            <div className="kv">
+              <div className="k">Finish</div>
+              <div className="v">{firstNonEmpty(getFinish(p), "-")}</div>
             </div>
             <div className="kv">
               <div className="k">MOQ</div>
-              <div className="v">{p.moqMeters} m</div>
+              <div className="v">{firstNonEmpty(fmtNum(p.salesMOQ, 0), "-")}</div>
             </div>
             <div className="kv">
-              <div className="k">Lead Time</div>
-              <div className="v">{p.leadTimeDays} days</div>
+              <div className="k">Supply Model</div>
+              <div className="v">{firstNonEmpty(p.supplyModel, "-")}</div>
             </div>
             <div className="kv">
-              <div className="k">Packing</div>
-              <div className="v">{p.packing}</div>
-            </div>
-            <div className="kv">
-              <div className="k">Suitable For</div>
-              <div className="v">{(p.usage || []).join(", ") || "-"}</div>
+              <div className="k">Collection</div>
+              <div className="v">{firstNonEmpty(p.collectionName, p.collection?.name, "-")}</div>
             </div>
           </div>
 
-          <div className="section">
-            <div className="sectionTitle">About this product</div>
-            <div className="sectionText">{p.long}</div>
-          </div>
+          {/* ✅ New attractive panels */}
+          <div className="sectionGrid">
+            <div className="panel">
+              <div className="panelTitle">About</div>
 
-          <div className="twoCols">
-            <div className="section">
-              <div className="sectionTitle">Applications</div>
-              <ul className="list">
-                {(p.applications || []).map((x) => (
-                  <li key={x}>{x}</li>
-                ))}
-              </ul>
+              {aboutHtml ? (
+                <div className="aboutHtml" dangerouslySetInnerHTML={{ __html: safeHtml(aboutHtml) }} />
+              ) : (
+                <div className="panelText">{aboutFallback}</div>
+              )}
             </div>
 
-            <div className="section">
-              <div className="sectionTitle">Suitable for</div>
+            <div className="panel">
+              <div className="panelTitle">Suitability</div>
+
+              {suitabilityRows.length > 0 ? (
+                <div className="suitRows">
+                  {suitabilityRows.slice(0, 14).map((r, idx) => (
+                    <div key={idx} className="suitRow">
+                      <div className="suitA">{r.a}</div>
+                      {r.b ? <div className="suitB">{r.b}</div> : <div className="suitB" />}
+                      <div className="suitC">{r.c}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="panelText">-</div>
+              )}
+            </div>
+          </div>
+
+          <div className="sectionGrid2">
+            <div className="panel">
+              <div className="panelTitle">Keywords</div>
               <div className="chips">
-                {(p.usage || []).map((u) => (
-                  <span key={u} className="chip soft">
-                    {u}
+                {(p.keywords || []).slice(0, 18).map((k) => (
+                  <span key={k} className="chip soft">
+                    {k}
                   </span>
                 ))}
+                {(!p.keywords || p.keywords.length === 0) && <span className="chip soft">-</span>}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panelTitle">Rating</div>
+              <div className="ratingBox">
+                <div className="ratingValue">{firstNonEmpty(fmtNum(p.ratingValue, 1), "-")}</div>
+                <div className="ratingMeta">
+                  {firstNonEmpty(fmtNum(p.ratingCount, 0), "0")} reviews
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="callout">
-            For pricing, stock, or sampling: contact sales/admin team (this app is
-            catalogue-only).
-          </div>
+          {faq.length > 0 && (
+            <div className="panel faqPanel">
+              <div className="panelTitle">FAQs</div>
+              <div className="faqList">
+                {faq.map((x, i) => (
+                  <FaqItem key={i} q={x.q} a={x.a} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ✅ Removed the pricing/stock callout completely */}
         </div>
       </div>
 
@@ -649,7 +850,7 @@ function ProductDetailsPage() {
             <div className="qrModalTop">
               <div>
                 <div className="qrModalTitle">Scan to open product</div>
-                <div className="qrModalCode">{p.id}</div>
+                <div className="qrModalCode">{code}</div>
               </div>
               <button className="qrClose" onClick={() => setQrOpen(false)}>
                 ✕
@@ -672,10 +873,51 @@ function ProductDetailsPage() {
 
 /* ------------------------------ ROUTES ------------------------------ */
 export default function App() {
+  const [theme, setTheme] = useState(() => getInitialTheme());
+  const { products, loading, error, reload } = useProducts();
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  const onToggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"));
+
+  const envOk = ESPO_ENTITY_URL && ESPO_API_KEY;
+
+  if (!envOk) {
+    return (
+      <div className="app">
+        <Header theme={theme} onToggleTheme={onToggleTheme} />
+        <div className="errorBox">
+          <div className="errorTitle">Environment missing</div>
+          <div className="errorText">
+            Please set <b>VITE_ESPO_BASEURL</b> and <b>VITE_X_API_KEY</b> in <code>.env</code>, then restart the dev server.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Routes>
-      <Route path="/" element={<CataloguePage />} />
-      <Route path="/product/:id" element={<ProductDetailsPage />} />
+      <Route
+        path="/"
+        element={
+          <CataloguePage
+            products={products}
+            loading={loading}
+            error={error}
+            reload={reload}
+            theme={theme}
+            onToggleTheme={onToggleTheme}
+          />
+        }
+      />
+      <Route
+        path="/product/:id"
+        element={<ProductDetailsPage products={products} loading={loading} theme={theme} onToggleTheme={onToggleTheme} />}
+      />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
