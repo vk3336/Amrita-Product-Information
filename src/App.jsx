@@ -194,16 +194,16 @@ async function fetchAllProducts() {
     const list = Array.isArray(json?.list)
       ? json.list
       : Array.isArray(json?.data)
-      ? json.data
-      : Array.isArray(json)
-      ? json
-      : [];
+        ? json.data
+        : Array.isArray(json)
+          ? json
+          : [];
     const pageTotal =
       typeof json?.total === "number"
         ? json.total
         : typeof json?.count === "number"
-        ? json.count
-        : list.length;
+          ? json.count
+          : list.length;
 
     total = pageTotal === 0 ? 0 : pageTotal;
     all = all.concat(list);
@@ -245,60 +245,125 @@ function strokeR(doc, x, y, w, h, rgb, r = 0, lw = 0.2) {
   if (r > 0) doc.roundedRect(x, y, w, h, r, r, "S");
   else doc.rect(x, y, w, h, "S");
 }
+function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
+  // Draw a 5-pointed star using proper path filling with jsPDF methods
+  // fillPercent: 0 = empty, 1 = fully filled, 0.8 = 80% filled, etc.
+  const outerRadius = size / 2;
+  const innerRadius = outerRadius * 0.38;
+
+  // Calculate 10 points for the star (5 outer + 5 inner)
+  const points = [];
+  for (let i = 0; i < 5; i++) {
+    const outerAngle = (Math.PI / 2) + (i * 2 * Math.PI / 5);
+    points.push({
+      x: x + outerRadius * Math.cos(outerAngle),
+      y: y - outerRadius * Math.sin(outerAngle)
+    });
+
+    const innerAngle = outerAngle + (Math.PI / 5);
+    points.push({
+      x: x + innerRadius * Math.cos(innerAngle),
+      y: y - innerRadius * Math.sin(innerAngle)
+    });
+  }
+
+  // Helper function to draw the star path
+  const drawStarPath = () => {
+    doc.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      doc.lineTo(points[i].x, points[i].y);
+    }
+    doc.close(); // Close the path
+  };
+
+  doc.setLineWidth(0.25);
+
+  // Clamp fillPercent between 0 and 1
+  const fill = Math.max(0, Math.min(1, fillPercent));
+
+  if (fill === 0) {
+    // Empty star - gray outline only
+    doc.setFillColor(0, 0, 0, 0); // Transparent
+    doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
+    drawStarPath();
+    doc.stroke(); // Draw outline only
+  } else if (fill === 1) {
+    // Fully filled star - draw with gold color
+    doc.setFillColor(color[0], color[1], color[2]);
+    doc.setDrawColor(color[0], color[1], color[2]);
+    drawStarPath();
+    doc.fillStroke(); // Fill and stroke the star
+  } else {
+    // Partially filled star - simple partial fill, no extra borders
+    // Step 1: Draw the full outline in gray (one time only)
+    doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
+    doc.setFillColor(0, 0, 0, 0); // Transparent fill
+    drawStarPath();
+    doc.stroke();
+
+    // Step 2: Fill only the left portion using clipping
+    doc.saveGraphicsState();
+
+    // Calculate clipping rectangle - only left portion of star
+    const clipLeft = x - outerRadius;
+    const clipTop = y - outerRadius;
+    const clipWidth = outerRadius * 2 * fill; // Width based on fill percentage
+    const clipHeight = outerRadius * 2;
+
+    // Define clipping path with null style (path only, no fill/stroke)
+    doc.rect(clipLeft, clipTop, clipWidth, clipHeight, null);
+    doc.clip(); // Apply clipping region
+
+    // Discard the clipping path so it doesn't get drawn
+    if (doc.discardPath) {
+      doc.discardPath();
+    }
+
+    // Fill only the star shape within the clip (no stroke/border)
+    doc.setFillColor(color[0], color[1], color[2]);
+    drawStarPath();
+    doc.fill(); // Fill only, no stroke
+
+    // Restore graphics state (removes clipping)
+    doc.restoreGraphicsState();
+    // No need to redraw outline - the original outline is already there
+  }
+}
+
 function drawStars(doc, x, y, ratingValue, opts = {}) {
   const v = Number(ratingValue);
   const r = Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 0;
-  const full = Math.floor(r);
-  const half = r - full >= 0.5;
 
-  const size = Number(opts.size ?? 3.4);
-  const gap = Number(opts.gap ?? 1.3);
+  const size = Number(opts.size ?? 3); // Size in mm
+  const gap = Number(opts.gap ?? 0.7); // Gap between stars
 
-  const drawOne = (cx, cy, filled, halfFill) => {
-    const pts = [];
-    const outer = size;
-    const inner = size * 0.45;
-    const rot = -Math.PI / 2;
-    for (let i = 0; i < 10; i++) {
-      const ang = rot + (i * Math.PI) / 5;
-      const rad = i % 2 === 0 ? outer : inner;
-      pts.push([cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad]);
+  const goldColor = [255, 215, 0]; // Gold for filled
+  const emptyColor = [107, 114, 128]; // Gray for empty (#6b7280)
+
+  let currentX = x;
+
+  // Calculate exact fill percentage for each star
+  for (let i = 1; i <= 5; i++) {
+    // Calculate how much of this star should be filled
+    // For star i: if rating >= i, it's fully filled (1.0)
+    // If rating < i but > i-1, it's partially filled (r - (i-1))
+    // If rating <= i-1, it's empty (0)
+    const starStart = i - 1;
+    const starEnd = i;
+    let fillPercent = 0;
+
+    if (r >= starEnd) {
+      fillPercent = 1.0; // Fully filled
+    } else if (r > starStart) {
+      fillPercent = r - starStart; // Partial fill (e.g., 0.8 for 4.8 rating on 5th star)
+    } else {
+      fillPercent = 0; // Empty
     }
 
-    doc.setLineWidth(0.22);
-    doc.setDrawColor(90, 98, 112);
+    // Draw star shape with exact fill percentage
+    drawStarShape(doc, currentX + size / 2, y, size, fillPercent, goldColor, emptyColor);
 
-    if (filled || halfFill) {
-      doc.setFillColor(45, 212, 191);
-      doc.lines(
-        pts.map((p) => [p[0] - pts[0][0], p[1] - pts[0][1]]),
-        pts[0][0],
-        pts[0][1],
-        [1, 1],
-        "F",
-        true
-      );
-
-      if (halfFill) {
-        doc.setFillColor(11, 14, 20);
-        doc.rect(cx, cy - outer - 0.2, outer + 2.2, outer * 2 + 0.4, "F");
-      }
-    }
-
-    doc.lines(
-      pts.map((p) => [p[0] - pts[0][0], p[1] - pts[0][1]]),
-      pts[0][0],
-      pts[0][1],
-      [1, 1],
-      "S",
-      true
-    );
-  };
-
-  let cx = x;
-  for (let i = 0; i < 5; i++) {
-    drawOne(cx, y, i < full, !(i < full) && half && i === full);
-    cx += size * 2 + gap;
+    currentX += size + gap;
   }
 }
 
@@ -360,13 +425,20 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     "-"
   )}`;
 
-  // SHORT description only (requested)
+  // SHORT description prominently displayed (requested)
   const shortDesc = firstNonEmpty(
     p?.shortProductDescription,
     p?.productTagline,
     p?.description && stripHtml(p.description).slice(0, 120),
-    "-"
+    "No description available"
   );
+
+  // Debug: log what we're using for shortDesc
+  console.log("PDF shortDesc source:", {
+    shortProductDescription: p?.shortProductDescription,
+    productTagline: p?.productTagline,
+    finalShortDesc: shortDesc
+  });
 
   // image
   const imgUrl = getPrimaryImage(p) || fallbackImageSvg(code);
@@ -388,9 +460,10 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   // suitability compact unique segments
   const suit = uniqueSuitabilityCompact(p);
 
-  // rating stars (requested: stars only)
+  // rating data
   const rNum = Number(firstNonEmpty(p?.ratingValue, ""));
   const ratingSafe = Number.isFinite(rNum) ? Math.max(0, Math.min(5, rNum)) : 0;
+  const ratingCount = Number(firstNonEmpty(p?.ratingCount, "0")) || 0;
 
   /* ---------------- HEADER ---------------- */
   const headerH = 16;
@@ -405,7 +478,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   if (logoDataUrl) {
     try {
       doc.addImage(logoDataUrl, "PNG", logoX, logoY, logoW, logoH);
-    } catch {}
+    } catch { }
   }
 
   doc.setFont("helvetica", "bold");
@@ -470,7 +543,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     if (fmt) {
       try {
         doc.addImage(imgDataUrl, fmt, imgBoxX + 2, imgBoxY + 2, imgBoxW - 4, imgBoxH - 4);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -481,7 +554,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   if (qrDataUrl && typeof qrDataUrl === "string") {
     try {
       doc.addImage(qrDataUrl, "PNG", qrX + 3, qrY + 3, qrBoxW - 6, qrBoxH - 6);
-    } catch {}
+    } catch { }
   }
 
   // Link click area (QR only)
@@ -494,11 +567,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   doc.setFontSize(8.8);
   doc.setTextColor(225, 231, 239);
   doc.text(code, rightX + 4, y + 13.5);
-
-  // rating stars on first page (in hero)
-  if (ratingSafe > 0) {
-    drawStars(doc, rightX + pillW + 6, y + 12.6, ratingSafe, { size: 3.3, gap: 1.1 });
-  }
 
   // title/meta/desc
   let ty = y + 23.5;
@@ -531,6 +599,32 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
 
   y += heroH + 8;
 
+  /* ---------------- SHORT DESCRIPTION SECTION (prominent display) ---------------- */
+  if (shortDesc && shortDesc !== "No description available") {
+    const descSectionH = 28;
+    fillR(doc, margin, y, pageW - margin * 2, descSectionH, PANEL, 8);
+    strokeR(doc, margin, y, pageW - margin * 2, descSectionH, BORDER, 8);
+
+    // Title with accent line
+    doc.setDrawColor(45, 212, 191);
+    doc.setLineWidth(0.8);
+    doc.line(margin + 8, y + 8, margin + 35, y + 8);
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+    doc.text("Product Description", margin + 8, y + 14);
+
+    // Description text with better formatting
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(220, 225, 235);
+    const descLines = pdfWrap(doc, shortDesc, pageW - margin * 2 - 16).slice(0, 2);
+    doc.text(descLines, margin + 8, y + 22);
+
+    y += descSectionH + 6;
+  }
+
   /* ---------------- KEY SPECS (compact 2 columns, 3 rows) ---------------- */
   const gridGap = 6;
   const colW = (pageW - margin * 2 - gridGap) / 2;
@@ -547,8 +641,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(10.8);
   doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
-  doc.text("Key Specs", margin, y);
-  y += 5.4;
+  
 
   const cardH = 18;
 
@@ -581,14 +674,64 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     y += cardH + 5;
   }
 
+  /* ---------------- RATING SECTION (matching product detail page) ---------------- */
+  // Calculate footer position for remaining space checks
+  const footerY = pageH - margin - 8;
+  const remainingBeforeRating = footerY - y;
+  let ratingBoxW = 0;
+  let ratingBoxX = 0;
+  if (remainingBeforeRating > 32) {
+    const ratingBoxH = 30; // Slightly taller to match web layout better
+    ratingBoxW = 50; // Compact width for rating panel
+    ratingBoxX = pageW - margin - ratingBoxW;
+
+    fillR(doc, ratingBoxX, y, ratingBoxW, ratingBoxH, PANEL, 8);
+    strokeR(doc, ratingBoxX, y, ratingBoxW, ratingBoxH, BORDER, 8);
+
+    // Panel title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.8);
+    doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+    doc.text("Rating", ratingBoxX + 6, y + 8);
+
+    // Stars - match web version size (20px ≈ 5.3mm, using 4.5mm for better visibility)
+    // Position stars with proper spacing from title (match web: 8px margin-bottom ≈ 2mm)
+    const starsY = y + 13;
+    drawStars(doc, ratingBoxX + 6, starsY, ratingSafe, { size: 4.5, gap: 0.5 });
+
+    // Rating value - match web version (34px font, large and bold)
+    // Position below stars with proper spacing (stars extend to y+15.5, add 2mm gap)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(20); // Larger to match web's 34px prominence
+    doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+    doc.text(`${fmtNum(ratingSafe, 1)}/5`, ratingBoxX + 6, y + 21);
+
+    // Review count - match web version styling
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.2);
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    const reviewText = `${fmtNum(ratingCount, 0)} reviews`;
+    doc.text(reviewText, ratingBoxX + 6, y + 25.5);
+  }
+
   /* ---------------- SUITABILITY (compact, unique segments, no %) ---------------- */
   // ensure we don't spill past footer (hard limit: one page)
-  const footerY = pageH - margin - 8;
   const remaining = footerY - y;
   if (remaining > 28) {
     const boxH = Math.min(60, remaining - 6);
-    fillR(doc, margin, y, pageW - margin * 2, boxH, PANEL, 10);
-    strokeR(doc, margin, y, pageW - margin * 2, boxH, BORDER, 10);
+    // Adjust width if rating box is present (leave gap between them)
+    // Make sure suitability box doesn't overlap with rating box
+    const suitabilityW = ratingBoxW > 0
+      ? (ratingBoxX - margin - 6)  // Leave 6mm gap between suitability and rating
+      : (pageW - margin * 2);       // Full width if no rating box
+
+    // Ensure suitability box doesn't extend beyond rating box when both exist
+    const maxSuitabilityW = ratingBoxW > 0
+      ? Math.min(suitabilityW, ratingBoxX - margin - 6)
+      : suitabilityW;
+
+    fillR(doc, margin, y, maxSuitabilityW, boxH, PANEL, 10);
+    strokeR(doc, margin, y, maxSuitabilityW, boxH, BORDER, 10);
 
     // title
     doc.setDrawColor(45, 212, 191);
@@ -610,7 +753,11 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     let sy = rowStartY;
     for (let i = 0; i < show.length; i++) {
       const r = show[i];
-      if (i % 2 === 0) fillR(doc, margin + 7, sy - 5.0, pageW - margin * 2 - 14, 6.6, [20, 24, 33], 4);
+      // Adjust row background width to match suitability box width
+      const rowBgW = ratingBoxW > 0
+        ? (ratingBoxX - margin - 14)  // Match suitability box width
+        : (pageW - margin * 2 - 14);   // Full width if no rating box
+      if (i % 2 === 0) fillR(doc, margin + 7, sy - 5.0, rowBgW, 6.6, [20, 24, 33], 4);
 
       // segment
       doc.setFont("helvetica", "bold");
@@ -622,7 +769,10 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.2);
       doc.setTextColor(210, 217, 228);
-      const usesLine = pdfWrap(doc, r.uses || "-", pageW - margin * 2 - 90).slice(0, 1);
+      const usesMaxW = ratingBoxW > 0
+        ? (ratingBoxX - margin - 90)  // Adjust for rating box
+        : (pageW - margin * 2 - 90);   // Full width if no rating box
+      const usesLine = pdfWrap(doc, r.uses || "-", Math.max(20, usesMaxW)).slice(0, 1);
       doc.text(usesLine, margin + 55, sy);
 
       sy += rowH;
@@ -1058,7 +1208,22 @@ function ProductDetailsPage({ products, loading }) {
             <div className="panel">
               <div className="panelTitle">Rating</div>
               <div className="ratingBox">
-                <div className="ratingValue">{firstNonEmpty(fmtNum(p.ratingValue, 1), "-")}</div>
+                <div className="ratingStars">
+                  {[1, 2, 3, 4, 5].map((star) => {
+                    const ratingValue = Number(p.ratingValue) || 0;
+                    const filled = star <= ratingValue;
+                    const halfFilled = star - 0.5 <= ratingValue && star > ratingValue;
+                    return (
+                      <span
+                        key={star}
+                        className={`star ${filled ? 'filled' : halfFilled ? 'half' : 'empty'}`}
+                      >
+                        ★
+                      </span>
+                    );
+                  })}
+                </div>
+                <div className="ratingValue">{firstNonEmpty(fmtNum(p.ratingValue, 1), "0")}/5</div>
                 <div className="ratingMeta">{firstNonEmpty(fmtNum(p.ratingCount, 0), "0")} reviews</div>
               </div>
             </div>

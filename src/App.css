@@ -541,6 +541,34 @@ html[data-theme="light"] .ratingBox{
   background: rgba(255,255,255,.70);
   border: 1px solid rgba(0,0,0,.10);
 }
+
+.ratingStars{
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.star{
+  font-size: 20px;
+  color: #d1d5db; /* Default gray */
+  transition: color 0.2s ease;
+}
+
+.star.filled{
+  color: #ffd700; /* Gold for filled stars */
+}
+
+.star.half{
+  background: linear-gradient(90deg, #ffd700 50%, #d1d5db 50%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.star.empty{
+  color: #6b7280; /* Darker gray for empty stars */
+}
+
 .ratingValue{
   font-size: 34px;
   font-weight: 1000;
