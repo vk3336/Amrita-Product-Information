@@ -199,63 +199,85 @@ function strokeR(doc, x, y, w, h, rgb, r = 0, lw = 0.2) {
   else doc.rect(x, y, w, h, "S");
 }
 
-/* Stars in PDF */
+/* ------------------------------ Stars in PDF (FIXED) ------------------------------ */
+/* This is the exact safer approach that worked earlier:
+   - draw star using moveTo/lineTo
+   - for partial star, clip with doc.rect(..., null) so it DOES NOT draw a rectangle (no square artifact)
+*/
 function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
   const outerRadius = size / 2;
   const innerRadius = outerRadius * 0.38;
 
-  const pts = [];
+  const points = [];
   for (let i = 0; i < 5; i++) {
     const outerAngle = Math.PI / 2 + (i * 2 * Math.PI) / 5;
-    pts.push({ x: x + outerRadius * Math.cos(outerAngle), y: y - outerRadius * Math.sin(outerAngle) });
+    points.push({
+      x: x + outerRadius * Math.cos(outerAngle),
+      y: y - outerRadius * Math.sin(outerAngle),
+    });
     const innerAngle = outerAngle + Math.PI / 5;
-    pts.push({ x: x + innerRadius * Math.cos(innerAngle), y: y - innerRadius * Math.sin(innerAngle) });
+    points.push({
+      x: x + innerRadius * Math.cos(innerAngle),
+      y: y - innerRadius * Math.sin(innerAngle),
+    });
   }
 
-  const path = [["m", pts[0].x, pts[0].y]];
-  for (let i = 1; i < pts.length; i++) path.push(["l", pts[i].x, pts[i].y]);
-  path.push(["h"]);
+  const drawStarPath = () => {
+    doc.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) doc.lineTo(points[i].x, points[i].y);
+    doc.close();
+  };
 
-  const fill = Math.max(0, Math.min(1, fillPercent));
+  const fill = Math.max(0, Math.min(1, Number(fillPercent) || 0));
   doc.setLineWidth(0.25);
+
+  const doFillStroke = () => {
+    if (typeof doc.fillStroke === "function") doc.fillStroke();
+    else {
+      doc.fill();
+      doc.stroke();
+    }
+  };
 
   if (fill === 0) {
     doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
-    doc.path(path);
+    drawStarPath();
     doc.stroke();
+    return;
+  }
+
+  if (fill === 1) {
+    doc.setFillColor(color[0], color[1], color[2]);
+    doc.setDrawColor(color[0], color[1], color[2]);
+    drawStarPath();
+    doFillStroke();
     return;
   }
 
   // outline first
   doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
-  doc.path(path);
+  drawStarPath();
   doc.stroke();
 
-  if (fill === 1) {
-    doc.setDrawColor(color[0], color[1], color[2]);
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.path(path);
-    doc.fill();
-    return;
-  }
-
+  // partial fill (clip) — IMPORTANT: style=null to avoid drawing a rectangle/square
   doc.saveGraphicsState();
   const clipLeft = x - outerRadius;
   const clipTop = y - outerRadius;
   const clipWidth = outerRadius * 2 * fill;
   const clipHeight = outerRadius * 2;
 
-  doc.rect(clipLeft, clipTop, clipWidth, clipHeight);
+  doc.rect(clipLeft, clipTop, clipWidth, clipHeight, null);
   doc.clip();
   if (doc.discardPath) doc.discardPath();
 
-  doc.setDrawColor(color[0], color[1], color[2]);
   doc.setFillColor(color[0], color[1], color[2]);
-  doc.path(path);
+  doc.setDrawColor(color[0], color[1], color[2]);
+  drawStarPath();
   doc.fill();
 
   doc.restoreGraphicsState();
 }
+
 function drawStars(doc, x, y, ratingValue, opts = {}) {
   const v = Number(ratingValue);
   const r = Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 0;
@@ -311,10 +333,10 @@ export async function downloadProductPdf(
   const code = getDisplayCode(p);
   const title = firstNonEmpty(p?.productTitle, p?.name, code);
   const tagline = firstNonEmpty(p?.productTagline, "");
-  const metaLine = `${firstNonEmpty(p?.category, "-")} • ${firstNonEmpty(getStructure(p), "-")} • ${firstNonEmpty(
-    p?.design,
+  const metaLine = `${firstNonEmpty(p?.category, "-")} • ${firstNonEmpty(
+    getStructure(p),
     "-"
-  )}`;
+  )} • ${firstNonEmpty(p?.design, "-")}`;
 
   const shortDesc = firstNonEmpty(
     p?.shortProductDescription,
