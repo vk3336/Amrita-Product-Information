@@ -2,6 +2,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
 import "./App.css";
+import "./pdf.css";
+
 import { QRCodeCanvas } from "qrcode.react";
 import { downloadProductPdf } from "./productPdf";
 
