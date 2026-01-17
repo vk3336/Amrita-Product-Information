@@ -145,13 +145,105 @@ function filterTags(tags) {
     .filter(Boolean)
     .filter((t) => String(t).trim().toLowerCase() !== "draft");
 }
+
+/* ------------------------------ Suitability helpers (NO % + UNIQUE) ------------------------------ */
+function stripPercentText(s) {
+  return String(s || "")
+    .replace(/\b\d{1,3}\s*%\b/g, "") // remove "92%" or "92 %"
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function normalizeSuitabilityText(s) {
+  return stripPercentText(s)
+    .replace(/\s*\/\s*/g, " / ")
+    .replace(/\s*-\s*/g, " - ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Parses:
+ * "Menswear | Casual shirts | 92%"
+ * "Uniforms / Workwear| Light service uniforms (indoor) | 60%"
+ */
 function parseSuitabilityLine(line) {
   const raw = String(line || "").trim();
   if (!raw) return null;
+
   const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
-  if (parts.length >= 2) return { a: parts[0], b: parts.slice(1).join(" - "), c: "" };
-  return { a: raw.replace(/\s*\|\s*/g, " - "), b: "", c: "" };
+
+  // Segment (left)
+  const seg = normalizeSuitabilityText(parts[0] || "");
+
+  // Use (middle). Some rows may contain extra pipes; keep middle joined.
+  const mid = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : (parts[1] || "");
+  const use = normalizeSuitabilityText(mid);
+
+  // Score (right) kept for compatibility but we will NOT render it in UI
+  const score = normalizeSuitabilityText(parts[parts.length - 1] || "");
+  const scoreOnly = /\b\d{1,3}\s*%\b/.test(String(parts[parts.length - 1] || "")) ? score : "";
+
+  return {
+    seg: seg || "-",
+    use: use || "-",
+    score: scoreOnly || "",
+    // legacy keys for old render (safe)
+    a: seg || "-",
+    b: use || "",
+    c: ""
+  };
 }
+
+/**
+ * Returns [{ seg, uses: "A - B - C" }, ...]
+ * - removes % values
+ * - groups by segment
+ * - keeps unique uses (case-insensitive)
+ */
+function uniqueSuitabilityForUI(p, maxSeg = 12) {
+  const rows = (p?.suitability || []).map(parseSuitabilityLine).filter(Boolean);
+
+  const map = new Map(); // segKey -> { seg, usesMap: Map<useKey, useLabel> }
+  for (const r of rows) {
+    const segLabel = normalizeSuitabilityText(r.seg || r.a || "");
+    const segKey = segLabel.toLowerCase();
+    if (!segKey) continue;
+
+    if (!map.has(segKey)) map.set(segKey, { seg: segLabel, usesMap: new Map() });
+
+    const useLabel = normalizeSuitabilityText(r.use || r.b || "");
+    if (useLabel && useLabel !== "-") {
+      // split any accidental list separators inside use
+      const parts = useLabel
+        .split(/[,•]+/g)
+        .map((s) => normalizeSuitabilityText(s))
+        .filter(Boolean)
+        .filter((s) => s !== "-");
+
+      const bucket = map.get(segKey).usesMap;
+      if (parts.length) {
+        for (const u of parts) {
+          const k = u.toLowerCase();
+          if (!bucket.has(k)) bucket.set(k, u);
+        }
+      } else {
+        const k = useLabel.toLowerCase();
+        if (!bucket.has(k)) bucket.set(k, useLabel);
+      }
+    }
+  }
+
+  const out = [];
+  for (const { seg, usesMap } of map.values()) {
+    const uses = Array.from(usesMap.values());
+    out.push({ seg, uses: uses.length ? uses.join(" - ") : "-" });
+  }
+
+  return out.slice(0, maxSeg);
+}
+
 function getFaqList(p) {
   const items = [];
   for (let i = 1; i <= 6; i++) {
@@ -246,12 +338,9 @@ function strokeR(doc, x, y, w, h, rgb, r = 0, lw = 0.2) {
   else doc.rect(x, y, w, h, "S");
 }
 function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
-  // Draw a 5-pointed star using proper path filling with jsPDF methods
-  // fillPercent: 0 = empty, 1 = fully filled, 0.8 = 80% filled, etc.
   const outerRadius = size / 2;
   const innerRadius = outerRadius * 0.38;
 
-  // Calculate 10 points for the star (5 outer + 5 inner)
   const points = [];
   for (let i = 0; i < 5; i++) {
     const outerAngle = (Math.PI / 2) + (i * 2 * Math.PI / 5);
@@ -267,66 +356,51 @@ function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
     });
   }
 
-  // Helper function to draw the star path
   const drawStarPath = () => {
     doc.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i++) {
       doc.lineTo(points[i].x, points[i].y);
     }
-    doc.close(); // Close the path
+    doc.close();
   };
 
   doc.setLineWidth(0.25);
 
-  // Clamp fillPercent between 0 and 1
   const fill = Math.max(0, Math.min(1, fillPercent));
 
   if (fill === 0) {
-    // Empty star - gray outline only
-    doc.setFillColor(0, 0, 0, 0); // Transparent
+    doc.setFillColor(0, 0, 0, 0);
     doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
     drawStarPath();
-    doc.stroke(); // Draw outline only
+    doc.stroke();
   } else if (fill === 1) {
-    // Fully filled star - draw with gold color
     doc.setFillColor(color[0], color[1], color[2]);
     doc.setDrawColor(color[0], color[1], color[2]);
     drawStarPath();
-    doc.fillStroke(); // Fill and stroke the star
+    doc.fillStroke();
   } else {
-    // Partially filled star - simple partial fill, no extra borders
-    // Step 1: Draw the full outline in gray (one time only)
     doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
-    doc.setFillColor(0, 0, 0, 0); // Transparent fill
+    doc.setFillColor(0, 0, 0, 0);
     drawStarPath();
     doc.stroke();
 
-    // Step 2: Fill only the left portion using clipping
     doc.saveGraphicsState();
 
-    // Calculate clipping rectangle - only left portion of star
     const clipLeft = x - outerRadius;
     const clipTop = y - outerRadius;
-    const clipWidth = outerRadius * 2 * fill; // Width based on fill percentage
+    const clipWidth = outerRadius * 2 * fill;
     const clipHeight = outerRadius * 2;
 
-    // Define clipping path with null style (path only, no fill/stroke)
     doc.rect(clipLeft, clipTop, clipWidth, clipHeight, null);
-    doc.clip(); // Apply clipping region
+    doc.clip();
 
-    // Discard the clipping path so it doesn't get drawn
-    if (doc.discardPath) {
-      doc.discardPath();
-    }
+    if (doc.discardPath) doc.discardPath();
 
-    // Fill only the star shape within the clip (no stroke/border)
     doc.setFillColor(color[0], color[1], color[2]);
     drawStarPath();
-    doc.fill(); // Fill only, no stroke
+    doc.fill();
 
-    // Restore graphics state (removes clipping)
     doc.restoreGraphicsState();
-    // No need to redraw outline - the original outline is already there
   }
 }
 
@@ -334,70 +408,35 @@ function drawStars(doc, x, y, ratingValue, opts = {}) {
   const v = Number(ratingValue);
   const r = Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 0;
 
-  const size = Number(opts.size ?? 3); // Size in mm
-  const gap = Number(opts.gap ?? 0.7); // Gap between stars
+  const size = Number(opts.size ?? 3);
+  const gap = Number(opts.gap ?? 0.7);
 
-  const goldColor = [255, 215, 0]; // Gold for filled
-  const emptyColor = [107, 114, 128]; // Gray for empty (#6b7280)
+  const goldColor = [255, 215, 0];
+  const emptyColor = [107, 114, 128];
 
   let currentX = x;
 
-  // Calculate exact fill percentage for each star
   for (let i = 1; i <= 5; i++) {
-    // Calculate how much of this star should be filled
-    // For star i: if rating >= i, it's fully filled (1.0)
-    // If rating < i but > i-1, it's partially filled (r - (i-1))
-    // If rating <= i-1, it's empty (0)
     const starStart = i - 1;
     const starEnd = i;
     let fillPercent = 0;
 
-    if (r >= starEnd) {
-      fillPercent = 1.0; // Fully filled
-    } else if (r > starStart) {
-      fillPercent = r - starStart; // Partial fill (e.g., 0.8 for 4.8 rating on 5th star)
-    } else {
-      fillPercent = 0; // Empty
-    }
+    if (r >= starEnd) fillPercent = 1.0;
+    else if (r > starStart) fillPercent = r - starStart;
+    else fillPercent = 0;
 
-    // Draw star shape with exact fill percentage
     drawStarShape(doc, currentX + size / 2, y, size, fillPercent, goldColor, emptyColor);
-
     currentX += size + gap;
   }
 }
 
 function uniqueSuitabilityCompact(p) {
-  const rows = (p?.suitability || []).map(parseSuitabilityLine).filter(Boolean);
+  // Use the same parser (already strips %)
+  const grouped = uniqueSuitabilityForUI(p, 999); // all segments
+  if (!grouped.length) return [{ seg: "-", uses: "-" }];
 
-  // unique by segment (a); merge uses from b/c using " - " separator
-  const map = new Map();
-  for (const r of rows) {
-    const seg = String(r.a || "").trim();
-    if (!seg) continue;
-
-    const use = String(firstNonEmpty(r.b, r.c, "")).trim();
-    if (!map.has(seg)) map.set(seg, new Set());
-    if (use) {
-      // split common separators then re-join as " - "
-      const parts = use
-        .split(/[,/|•]+/g)
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (parts.length) parts.forEach((x) => map.get(seg).add(x));
-      else map.get(seg).add(use);
-    }
-  }
-
-  // if empty, return "-"
-  if (map.size === 0) return [{ seg: "-", uses: "-" }];
-
-  const out = [];
-  for (const [seg, set] of map.entries()) {
-    const uses = Array.from(set);
-    out.push({ seg, uses: uses.length ? uses.join(" - ") : "-" });
-  }
-  return out.slice(0, 8); // keep one-page compact
+  // keep one-page compact: max 8 segments
+  return grouped.slice(0, 8);
 }
 
 async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
@@ -406,14 +445,12 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 12;
 
-  // theme
   const BG = [11, 14, 20];
   const PANEL = [15, 18, 25];
   const BORDER = [45, 52, 66];
   const MUTED = [153, 163, 175];
   const TEXT = [240, 244, 248];
 
-  // background
   doc.setFillColor(BG[0], BG[1], BG[2]);
   doc.rect(0, 0, pageW, pageH, "F");
 
@@ -425,7 +462,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     "-"
   )}`;
 
-  // SHORT description prominently displayed (requested)
   const shortDesc = firstNonEmpty(
     p?.shortProductDescription,
     p?.productTagline,
@@ -433,14 +469,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     "No description available"
   );
 
-  // Debug: log what we're using for shortDesc
-  console.log("PDF shortDesc source:", {
-    shortProductDescription: p?.shortProductDescription,
-    productTagline: p?.productTagline,
-    finalShortDesc: shortDesc
-  });
-
-  // image
   const imgUrl = getPrimaryImage(p) || fallbackImageSvg(code);
   let imgDataUrl = null;
   try {
@@ -449,7 +477,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     imgDataUrl = null;
   }
 
-  // company logo in header (public/logo1.png)
   let logoDataUrl = null;
   try {
     logoDataUrl = await toDataUrl("/logo1.png");
@@ -457,10 +484,8 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     logoDataUrl = null;
   }
 
-  // suitability compact unique segments
   const suit = uniqueSuitabilityCompact(p);
 
-  // rating data
   const rNum = Number(firstNonEmpty(p?.ratingValue, ""));
   const ratingSafe = Number.isFinite(rNum) ? Math.max(0, Math.min(5, rNum)) : 0;
   const ratingCount = Number(firstNonEmpty(p?.ratingCount, "0")) || 0;
@@ -510,7 +535,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   const qrX = heroX + heroW - qrPad - qrBoxW;
   const qrY = y + qrPad;
 
-  const textMaxW = Math.max(46, rightW - (qrBoxW + 6)); // reserve QR
+  const textMaxW = Math.max(46, rightW - (qrBoxW + 6));
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(13.2);
@@ -524,13 +549,11 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   doc.setFontSize(8.8);
   const descLines = pdfWrap(doc, shortDesc, textMaxW).slice(0, 2);
 
-  // hero height fixed compact (to force one page)
   const heroH = 62;
 
   fillR(doc, heroX, y, heroW, heroH, PANEL, 10);
   strokeR(doc, heroX, y, heroW, heroH, BORDER, 10);
 
-  // image box
   const imgBoxY = y + 6;
   const imgBoxH = heroH - 12;
   fillR(doc, imgBoxX, imgBoxY, imgBoxW, imgBoxH, [20, 24, 33], 8);
@@ -547,7 +570,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     }
   }
 
-  // QR fixed
   fillR(doc, qrX, qrY, qrBoxW, qrBoxH, [20, 24, 33], 6);
   strokeR(doc, qrX, qrY, qrBoxW, qrBoxH, BORDER, 6);
 
@@ -557,10 +579,8 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     } catch { }
   }
 
-  // Link click area (QR only)
   doc.link(qrX, qrY, qrBoxW, qrBoxH, { url: productUrl });
 
-  // code pill
   const pillW = Math.min(58, rightW);
   fillR(doc, rightX, y + 8, pillW, 8, [25, 30, 42], 5);
   doc.setFont("helvetica", "bold");
@@ -568,7 +588,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   doc.setTextColor(225, 231, 239);
   doc.text(code, rightX + 4, y + 13.5);
 
-  // title/meta/desc
   let ty = y + 23.5;
 
   doc.setFont("helvetica", "bold");
@@ -599,13 +618,12 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
 
   y += heroH + 8;
 
-  /* ---------------- SHORT DESCRIPTION SECTION (prominent display) ---------------- */
+  /* ---------------- SHORT DESCRIPTION SECTION ---------------- */
   if (shortDesc && shortDesc !== "No description available") {
     const descSectionH = 28;
     fillR(doc, margin, y, pageW - margin * 2, descSectionH, PANEL, 8);
     strokeR(doc, margin, y, pageW - margin * 2, descSectionH, BORDER, 8);
 
-    // Title with accent line
     doc.setDrawColor(45, 212, 191);
     doc.setLineWidth(0.8);
     doc.line(margin + 8, y + 8, margin + 35, y + 8);
@@ -615,17 +633,16 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
     doc.text("Product Description", margin + 8, y + 14);
 
-    // Description text with better formatting
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
     doc.setTextColor(220, 225, 235);
-    const descLines = pdfWrap(doc, shortDesc, pageW - margin * 2 - 16).slice(0, 2);
-    doc.text(descLines, margin + 8, y + 22);
+    const descLines2 = pdfWrap(doc, shortDesc, pageW - margin * 2 - 16).slice(0, 2);
+    doc.text(descLines2, margin + 8, y + 22);
 
     y += descSectionH + 6;
   }
 
-  /* ---------------- KEY SPECS (compact 2 columns, 3 rows) ---------------- */
+  /* ---------------- KEY SPECS ---------------- */
   const gridGap = 6;
   const colW = (pageW - margin * 2 - gridGap) / 2;
 
@@ -637,11 +654,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     { k: "Finish", v: firstNonEmpty(getFinish(p), "-") },
     { k: "MOQ", v: firstNonEmpty(fmtNum(p?.salesMOQ, 0), "-") },
   ];
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.8);
-  doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
-  
 
   const cardH = 18;
 
@@ -674,39 +686,33 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     y += cardH + 5;
   }
 
-  /* ---------------- RATING SECTION (matching product detail page) ---------------- */
-  // Calculate footer position for remaining space checks
+  /* ---------------- RATING SECTION ---------------- */
   const footerY = pageH - margin - 8;
   const remainingBeforeRating = footerY - y;
   let ratingBoxW = 0;
   let ratingBoxX = 0;
+
   if (remainingBeforeRating > 32) {
-    const ratingBoxH = 30; // Slightly taller to match web layout better
-    ratingBoxW = 50; // Compact width for rating panel
+    const ratingBoxH = 30;
+    ratingBoxW = 50;
     ratingBoxX = pageW - margin - ratingBoxW;
 
     fillR(doc, ratingBoxX, y, ratingBoxW, ratingBoxH, PANEL, 8);
     strokeR(doc, ratingBoxX, y, ratingBoxW, ratingBoxH, BORDER, 8);
 
-    // Panel title
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.8);
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
     doc.text("Rating", ratingBoxX + 6, y + 8);
 
-    // Stars - match web version size (20px ≈ 5.3mm, using 4.5mm for better visibility)
-    // Position stars with proper spacing from title (match web: 8px margin-bottom ≈ 2mm)
     const starsY = y + 13;
     drawStars(doc, ratingBoxX + 6, starsY, ratingSafe, { size: 4.5, gap: 0.5 });
 
-    // Rating value - match web version (34px font, large and bold)
-    // Position below stars with proper spacing (stars extend to y+15.5, add 2mm gap)
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(20); // Larger to match web's 34px prominence
+    doc.setFontSize(20);
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
     doc.text(`${fmtNum(ratingSafe, 1)}/5`, ratingBoxX + 6, y + 21);
 
-    // Review count - match web version styling
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.2);
     doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
@@ -714,18 +720,11 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     doc.text(reviewText, ratingBoxX + 6, y + 25.5);
   }
 
-  /* ---------------- SUITABILITY (compact, unique segments, no %) ---------------- */
-  // ensure we don't spill past footer (hard limit: one page)
+  /* ---------------- SUITABILITY (unique segments, no %) ---------------- */
   const remaining = footerY - y;
   if (remaining > 28) {
     const boxH = Math.min(60, remaining - 6);
-    // Adjust width if rating box is present (leave gap between them)
-    // Make sure suitability box doesn't overlap with rating box
-    const suitabilityW = ratingBoxW > 0
-      ? (ratingBoxX - margin - 6)  // Leave 6mm gap between suitability and rating
-      : (pageW - margin * 2);       // Full width if no rating box
-
-    // Ensure suitability box doesn't extend beyond rating box when both exist
+    const suitabilityW = ratingBoxW > 0 ? (ratingBoxX - margin - 6) : (pageW - margin * 2);
     const maxSuitabilityW = ratingBoxW > 0
       ? Math.min(suitabilityW, ratingBoxX - margin - 6)
       : suitabilityW;
@@ -733,7 +732,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     fillR(doc, margin, y, maxSuitabilityW, boxH, PANEL, 10);
     strokeR(doc, margin, y, maxSuitabilityW, boxH, BORDER, 10);
 
-    // title
     doc.setDrawColor(45, 212, 191);
     doc.setLineWidth(0.8);
     doc.line(margin + 8, y + 10, margin + 28, y + 10);
@@ -743,35 +741,26 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
     doc.text("Suitability", margin + 8, y + 16.8);
 
-    // rows
     const rowStartY = y + 24;
     const rowH = 7.2;
-
     const maxRows = Math.max(1, Math.floor((boxH - 26) / rowH));
     const show = suit.slice(0, maxRows);
 
     let sy = rowStartY;
     for (let i = 0; i < show.length; i++) {
       const r = show[i];
-      // Adjust row background width to match suitability box width
-      const rowBgW = ratingBoxW > 0
-        ? (ratingBoxX - margin - 14)  // Match suitability box width
-        : (pageW - margin * 2 - 14);   // Full width if no rating box
+      const rowBgW = ratingBoxW > 0 ? (ratingBoxX - margin - 14) : (pageW - margin * 2 - 14);
       if (i % 2 === 0) fillR(doc, margin + 7, sy - 5.0, rowBgW, 6.6, [20, 24, 33], 4);
 
-      // segment
       doc.setFont("helvetica", "bold");
       doc.setFontSize(9.2);
       doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
       doc.text(String(r.seg).slice(0, 22), margin + 10, sy);
 
-      // uses (joined with " - ")
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.2);
       doc.setTextColor(210, 217, 228);
-      const usesMaxW = ratingBoxW > 0
-        ? (ratingBoxX - margin - 90)  // Adjust for rating box
-        : (pageW - margin * 2 - 90);   // Full width if no rating box
+      const usesMaxW = ratingBoxW > 0 ? (ratingBoxX - margin - 90) : (pageW - margin * 2 - 90);
       const usesLine = pdfWrap(doc, r.uses || "-", Math.max(20, usesMaxW)).slice(0, 1);
       doc.text(usesLine, margin + 55, sy);
 
@@ -1007,7 +996,6 @@ function ProductDetailsPage({ products, loading }) {
   const p = useMemo(() => products.find((x) => x.id === id), [products, id]);
   const [qrOpen, setQrOpen] = useState(false);
 
-  // ✅ QR ref (reliable for PDF)
   const qrRef = useRef(null);
 
   if (loading) {
@@ -1047,7 +1035,10 @@ function ProductDetailsPage({ products, loading }) {
   const img = getPrimaryImage(p) || fallbackImageSvg(code);
 
   const tags = filterTags(p.merchTags);
-  const suitabilityRows = (p.suitability || []).map(parseSuitabilityLine).filter(Boolean);
+
+  // ✅ NEW: grouped, unique, no % values
+  const suitabilityUnique = useMemo(() => uniqueSuitabilityForUI(p, 14), [p]);
+
   const faq = getFaqList(p);
 
   const aboutHtml = firstNonEmpty(p.fullProductDescription, p.description, "");
@@ -1069,7 +1060,6 @@ function ProductDetailsPage({ products, loading }) {
     <div className="app">
       <Header />
 
-      {/* offscreen QR for PDF */}
       <div style={{ position: "fixed", left: "-99999px", top: "-99999px" }}>
         <QRCodeCanvas ref={qrRef} value={productUrl} size={240} includeMargin />
       </div>
@@ -1176,13 +1166,16 @@ function ProductDetailsPage({ products, loading }) {
             <div className="panel">
               <div className="panelTitle">Suitability</div>
 
-              {suitabilityRows.length > 0 ? (
+              {suitabilityUnique.length > 0 ? (
                 <div className="suitRows">
-                  {suitabilityRows.slice(0, 14).map((r, idx) => (
+                  {suitabilityUnique.slice(0, 14).map((r, idx) => (
                     <div key={idx} className="suitRow">
-                      <div className="suitA">{r.a}</div>
-                      {r.b ? <div className="suitB">{r.b}</div> : <div className="suitB" />}
-                      <div className="suitC">{r.c}</div>
+                      {/* left column */}
+                      <div className="suitA">{r.seg}</div>
+                      {/* right column (unique uses, NO %) */}
+                      <div className="suitB">{r.uses}</div>
+                      {/* keep third column empty to match your existing CSS grid */}
+                      <div className="suitC" />
                     </div>
                   ))}
                 </div>
@@ -1216,7 +1209,7 @@ function ProductDetailsPage({ products, loading }) {
                     return (
                       <span
                         key={star}
-                        className={`star ${filled ? 'filled' : halfFilled ? 'half' : 'empty'}`}
+                        className={`star ${filled ? "filled" : halfFilled ? "half" : "empty"}`}
                       >
                         ★
                       </span>
