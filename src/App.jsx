@@ -141,20 +141,17 @@ function safeHtml(html) {
 }
 function filterTags(tags) {
   const arr = Array.isArray(tags) ? tags : [];
-  return arr
-    .filter(Boolean)
-    .filter((t) => String(t).trim().toLowerCase() !== "draft");
+  return arr.filter(Boolean).filter((t) => String(t).trim().toLowerCase() !== "draft");
 }
 
 /* ------------------------------ Suitability helpers (NO % + UNIQUE) ------------------------------ */
 function stripPercentText(s) {
   return String(s || "")
-    .replace(/\b\d{1,3}\s*%\b/g, "") // remove "92%" or "92 %"
+    .replace(/\b\d{1,3}\s*%\b/g, "")
     .replace(/\(\s*\)/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
-
 function normalizeSuitabilityText(s) {
   return stripPercentText(s)
     .replace(/\s*\/\s*/g, " / ")
@@ -162,46 +159,28 @@ function normalizeSuitabilityText(s) {
     .replace(/\s{2,}/g, " ")
     .trim();
 }
-
-/**
- * Parses:
- * "Menswear | Casual shirts | 92%"
- * "Uniforms / Workwear| Light service uniforms (indoor) | 60%"
- */
 function parseSuitabilityLine(line) {
   const raw = String(line || "").trim();
   if (!raw) return null;
 
   const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
 
-  // Segment (left)
   const seg = normalizeSuitabilityText(parts[0] || "");
-
-  // Use (middle). Some rows may contain extra pipes; keep middle joined.
-  const mid = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : (parts[1] || "");
+  const mid = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : parts[1] || "";
   const use = normalizeSuitabilityText(mid);
 
-  // Score (right) kept for compatibility but we will NOT render it in UI
-  const score = normalizeSuitabilityText(parts[parts.length - 1] || "");
-  const scoreOnly = /\b\d{1,3}\s*%\b/.test(String(parts[parts.length - 1] || "")) ? score : "";
+  const lastRaw = String(parts[parts.length - 1] || "");
+  const scoreOnly = /\b\d{1,3}\s*%\b/.test(lastRaw) ? normalizeSuitabilityText(lastRaw) : "";
 
   return {
     seg: seg || "-",
     use: use || "-",
     score: scoreOnly || "",
-    // legacy keys for old render (safe)
     a: seg || "-",
     b: use || "",
-    c: ""
+    c: "",
   };
 }
-
-/**
- * Returns [{ seg, uses: "A - B - C" }, ...]
- * - removes % values
- * - groups by segment
- * - keeps unique uses (case-insensitive)
- */
 function uniqueSuitabilityForUI(p, maxSeg = 12) {
   const rows = (p?.suitability || []).map(parseSuitabilityLine).filter(Boolean);
 
@@ -215,7 +194,6 @@ function uniqueSuitabilityForUI(p, maxSeg = 12) {
 
     const useLabel = normalizeSuitabilityText(r.use || r.b || "");
     if (useLabel && useLabel !== "-") {
-      // split any accidental list separators inside use
       const parts = useLabel
         .split(/[,•]+/g)
         .map((s) => normalizeSuitabilityText(s))
@@ -240,6 +218,9 @@ function uniqueSuitabilityForUI(p, maxSeg = 12) {
     const uses = Array.from(usesMap.values());
     out.push({ seg, uses: uses.length ? uses.join(" - ") : "-" });
   }
+
+  // sort for stable output (Menswear, Womenswear, etc.)
+  out.sort((x, y) => x.seg.localeCompare(y.seg));
 
   return out.slice(0, maxSeg);
 }
@@ -286,16 +267,17 @@ async function fetchAllProducts() {
     const list = Array.isArray(json?.list)
       ? json.list
       : Array.isArray(json?.data)
-        ? json.data
-        : Array.isArray(json)
-          ? json
-          : [];
+      ? json.data
+      : Array.isArray(json)
+      ? json
+      : [];
+
     const pageTotal =
       typeof json?.total === "number"
         ? json.total
         : typeof json?.count === "number"
-          ? json.count
-          : list.length;
+        ? json.count
+        : list.length;
 
     total = pageTotal === 0 ? 0 : pageTotal;
     all = all.concat(list);
@@ -320,7 +302,6 @@ async function toDataUrl(url) {
     reader.readAsDataURL(blob);
   });
 }
-
 function pdfWrap(doc, text, maxW) {
   const t = String(text || "").trim();
   if (!t) return [];
@@ -343,29 +324,19 @@ function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
 
   const points = [];
   for (let i = 0; i < 5; i++) {
-    const outerAngle = (Math.PI / 2) + (i * 2 * Math.PI / 5);
-    points.push({
-      x: x + outerRadius * Math.cos(outerAngle),
-      y: y - outerRadius * Math.sin(outerAngle)
-    });
-
-    const innerAngle = outerAngle + (Math.PI / 5);
-    points.push({
-      x: x + innerRadius * Math.cos(innerAngle),
-      y: y - innerRadius * Math.sin(innerAngle)
-    });
+    const outerAngle = Math.PI / 2 + (i * 2 * Math.PI) / 5;
+    points.push({ x: x + outerRadius * Math.cos(outerAngle), y: y - outerRadius * Math.sin(outerAngle) });
+    const innerAngle = outerAngle + Math.PI / 5;
+    points.push({ x: x + innerRadius * Math.cos(innerAngle), y: y - innerRadius * Math.sin(innerAngle) });
   }
 
   const drawStarPath = () => {
     doc.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      doc.lineTo(points[i].x, points[i].y);
-    }
+    for (let i = 1; i < points.length; i++) doc.lineTo(points[i].x, points[i].y);
     doc.close();
   };
 
   doc.setLineWidth(0.25);
-
   const fill = Math.max(0, Math.min(1, fillPercent));
 
   if (fill === 0) {
@@ -385,25 +356,20 @@ function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
     doc.stroke();
 
     doc.saveGraphicsState();
-
     const clipLeft = x - outerRadius;
     const clipTop = y - outerRadius;
     const clipWidth = outerRadius * 2 * fill;
     const clipHeight = outerRadius * 2;
-
     doc.rect(clipLeft, clipTop, clipWidth, clipHeight, null);
     doc.clip();
-
     if (doc.discardPath) doc.discardPath();
 
     doc.setFillColor(color[0], color[1], color[2]);
     drawStarPath();
     doc.fill();
-
     doc.restoreGraphicsState();
   }
 }
-
 function drawStars(doc, x, y, ratingValue, opts = {}) {
   const v = Number(ratingValue);
   const r = Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 0;
@@ -412,15 +378,13 @@ function drawStars(doc, x, y, ratingValue, opts = {}) {
   const gap = Number(opts.gap ?? 0.7);
 
   const goldColor = [255, 215, 0];
-  const emptyColor = [107, 114, 128];
+  const emptyColor = [160, 165, 175];
 
   let currentX = x;
-
   for (let i = 1; i <= 5; i++) {
     const starStart = i - 1;
     const starEnd = i;
     let fillPercent = 0;
-
     if (r >= starEnd) fillPercent = 1.0;
     else if (r > starStart) fillPercent = r - starStart;
     else fillPercent = 0;
@@ -430,13 +394,12 @@ function drawStars(doc, x, y, ratingValue, opts = {}) {
   }
 }
 
+/* PDF: make grouped list longer but still 1 page */
 function uniqueSuitabilityCompact(p) {
-  // Use the same parser (already strips %)
-  const grouped = uniqueSuitabilityForUI(p, 999); // all segments
+  const grouped = uniqueSuitabilityForUI(p, 999);
   if (!grouped.length) return [{ seg: "-", uses: "-" }];
-
-  // keep one-page compact: max 8 segments
-  return grouped.slice(0, 8);
+  // Show more in PDF too (was 8). 12 is still safe for 1 page.
+  return grouped.slice(0, 12);
 }
 
 async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
@@ -445,12 +408,15 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 12;
 
-  const BG = [11, 14, 20];
-  const PANEL = [15, 18, 25];
-  const BORDER = [45, 52, 66];
-  const MUTED = [153, 163, 175];
-  const TEXT = [240, 244, 248];
+  // ✅ WHITE PDF THEME (clean)
+  const BG = [255, 255, 255];
+  const PANEL = [248, 250, 252];   // very light gray
+  const BORDER = [226, 232, 240];  // light border
+  const MUTED = [71, 85, 105];     // slate
+  const TEXT = [15, 23, 42];       // dark slate
+  const ACCENT = [45, 212, 191];   // teal
 
+  // background
   doc.setFillColor(BG[0], BG[1], BG[2]);
   doc.rect(0, 0, pageW, pageH, "F");
 
@@ -503,7 +469,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   if (logoDataUrl) {
     try {
       doc.addImage(logoDataUrl, "PNG", logoX, logoY, logoW, logoH);
-    } catch { }
+    } catch {}
   }
 
   doc.setFont("helvetica", "bold");
@@ -518,7 +484,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
 
   let y = margin + headerH + 7;
 
-  /* ---------------- HERO (compact) ---------------- */
+  /* ---------------- HERO ---------------- */
   const heroX = margin;
   const heroW = pageW - margin * 2;
 
@@ -554,9 +520,10 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   fillR(doc, heroX, y, heroW, heroH, PANEL, 10);
   strokeR(doc, heroX, y, heroW, heroH, BORDER, 10);
 
+  // image box
   const imgBoxY = y + 6;
   const imgBoxH = heroH - 12;
-  fillR(doc, imgBoxX, imgBoxY, imgBoxW, imgBoxH, [20, 24, 33], 8);
+  fillR(doc, imgBoxX, imgBoxY, imgBoxW, imgBoxH, [255, 255, 255], 8);
   strokeR(doc, imgBoxX, imgBoxY, imgBoxW, imgBoxH, BORDER, 8);
 
   if (imgDataUrl && typeof imgDataUrl === "string") {
@@ -566,28 +533,32 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     if (fmt) {
       try {
         doc.addImage(imgDataUrl, fmt, imgBoxX + 2, imgBoxY + 2, imgBoxW - 4, imgBoxH - 4);
-      } catch { }
+      } catch {}
     }
   }
 
-  fillR(doc, qrX, qrY, qrBoxW, qrBoxH, [20, 24, 33], 6);
+  // QR box (white)
+  fillR(doc, qrX, qrY, qrBoxW, qrBoxH, [255, 255, 255], 6);
   strokeR(doc, qrX, qrY, qrBoxW, qrBoxH, BORDER, 6);
 
   if (qrDataUrl && typeof qrDataUrl === "string") {
     try {
       doc.addImage(qrDataUrl, "PNG", qrX + 3, qrY + 3, qrBoxW - 6, qrBoxH - 6);
-    } catch { }
+    } catch {}
   }
-
   doc.link(qrX, qrY, qrBoxW, qrBoxH, { url: productUrl });
 
+  // code pill
   const pillW = Math.min(58, rightW);
-  fillR(doc, rightX, y + 8, pillW, 8, [25, 30, 42], 5);
+  fillR(doc, rightX, y + 8, pillW, 8, [237, 233, 254], 5);
+  strokeR(doc, rightX, y + 8, pillW, 8, [221, 214, 254], 5);
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8.8);
-  doc.setTextColor(225, 231, 239);
+  doc.setTextColor(76, 29, 149);
   doc.text(code, rightX + 4, y + 13.5);
 
+  // title/meta/desc
   let ty = y + 23.5;
 
   doc.setFont("helvetica", "bold");
@@ -605,7 +576,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   if (tagline) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
-    doc.setTextColor(200, 208, 220);
+    doc.setTextColor(51, 65, 85);
     const tLines = pdfWrap(doc, tagline, textMaxW).slice(0, 1);
     doc.text(tLines, rightX, ty);
     ty += 5.5;
@@ -613,7 +584,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.8);
-  doc.setTextColor(215, 222, 233);
+  doc.setTextColor(51, 65, 85);
   doc.text(descLines, rightX, ty);
 
   y += heroH + 8;
@@ -624,7 +595,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     fillR(doc, margin, y, pageW - margin * 2, descSectionH, PANEL, 8);
     strokeR(doc, margin, y, pageW - margin * 2, descSectionH, BORDER, 8);
 
-    doc.setDrawColor(45, 212, 191);
+    doc.setDrawColor(ACCENT[0], ACCENT[1], ACCENT[2]);
     doc.setLineWidth(0.8);
     doc.line(margin + 8, y + 8, margin + 35, y + 8);
 
@@ -635,7 +606,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
-    doc.setTextColor(220, 225, 235);
+    doc.setTextColor(51, 65, 85);
     const descLines2 = pdfWrap(doc, shortDesc, pageW - margin * 2 - 16).slice(0, 2);
     doc.text(descLines2, margin + 8, y + 22);
 
@@ -645,7 +616,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   /* ---------------- KEY SPECS ---------------- */
   const gridGap = 6;
   const colW = (pageW - margin * 2 - gridGap) / 2;
-
   const specs = [
     { k: "Composition", v: firstNonEmpty(getComposition(p), "-") },
     { k: "GSM", v: firstNonEmpty(fmtNum(p?.gsm, 2), "-") },
@@ -656,7 +626,6 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   ];
 
   const cardH = 18;
-
   const drawKV = (x, y0, w, k, v) => {
     fillR(doc, x, y0, w, cardH, PANEL, 8);
     strokeR(doc, x, y0, w, cardH, BORDER, 8);
@@ -689,6 +658,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   /* ---------------- RATING SECTION ---------------- */
   const footerY = pageH - margin - 8;
   const remainingBeforeRating = footerY - y;
+
   let ratingBoxW = 0;
   let ratingBoxX = 0;
 
@@ -716,23 +686,19 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.2);
     doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    const reviewText = `${fmtNum(ratingCount, 0)} reviews`;
-    doc.text(reviewText, ratingBoxX + 6, y + 25.5);
+    doc.text(`${fmtNum(ratingCount, 0)} reviews`, ratingBoxX + 6, y + 25.5);
   }
 
-  /* ---------------- SUITABILITY (unique segments, no %) ---------------- */
+  /* ---------------- SUITABILITY (more, still unique) ---------------- */
   const remaining = footerY - y;
   if (remaining > 28) {
-    const boxH = Math.min(60, remaining - 6);
-    const suitabilityW = ratingBoxW > 0 ? (ratingBoxX - margin - 6) : (pageW - margin * 2);
-    const maxSuitabilityW = ratingBoxW > 0
-      ? Math.min(suitabilityW, ratingBoxX - margin - 6)
-      : suitabilityW;
+    const boxH = Math.min(66, remaining - 6); // slightly taller
+    const maxSuitabilityW = ratingBoxW > 0 ? Math.min(ratingBoxX - margin - 6, ratingBoxX - margin - 6) : pageW - margin * 2;
 
     fillR(doc, margin, y, maxSuitabilityW, boxH, PANEL, 10);
     strokeR(doc, margin, y, maxSuitabilityW, boxH, BORDER, 10);
 
-    doc.setDrawColor(45, 212, 191);
+    doc.setDrawColor(ACCENT[0], ACCENT[1], ACCENT[2]);
     doc.setLineWidth(0.8);
     doc.line(margin + 8, y + 10, margin + 28, y + 10);
 
@@ -742,27 +708,31 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
     doc.text("Suitability", margin + 8, y + 16.8);
 
     const rowStartY = y + 24;
-    const rowH = 7.2;
+    const rowH = 6.6; // tighter -> more rows
     const maxRows = Math.max(1, Math.floor((boxH - 26) / rowH));
     const show = suit.slice(0, maxRows);
 
     let sy = rowStartY;
     for (let i = 0; i < show.length; i++) {
       const r = show[i];
-      const rowBgW = ratingBoxW > 0 ? (ratingBoxX - margin - 14) : (pageW - margin * 2 - 14);
-      if (i % 2 === 0) fillR(doc, margin + 7, sy - 5.0, rowBgW, 6.6, [20, 24, 33], 4);
+      const rowBgW = ratingBoxW > 0 ? ratingBoxX - margin - 14 : pageW - margin * 2 - 14;
+
+      if (i % 2 === 0) {
+        fillR(doc, margin + 7, sy - 4.8, rowBgW, 6.0, [255, 255, 255], 4);
+        strokeR(doc, margin + 7, sy - 4.8, rowBgW, 6.0, BORDER, 4, 0.15);
+      }
 
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(9.2);
+      doc.setFontSize(9.1);
       doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
-      doc.text(String(r.seg).slice(0, 22), margin + 10, sy);
+      doc.text(String(r.seg).slice(0, 24), margin + 10, sy);
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9.2);
-      doc.setTextColor(210, 217, 228);
-      const usesMaxW = ratingBoxW > 0 ? (ratingBoxX - margin - 90) : (pageW - margin * 2 - 90);
+      doc.setFontSize(9.1);
+      doc.setTextColor(51, 65, 85);
+      const usesMaxW = ratingBoxW > 0 ? ratingBoxX - margin - 90 : pageW - margin * 2 - 90;
       const usesLine = pdfWrap(doc, r.uses || "-", Math.max(20, usesMaxW)).slice(0, 1);
-      doc.text(usesLine, margin + 55, sy);
+      doc.text(usesLine, margin + 58, sy);
 
       sy += rowH;
       if (sy > y + boxH - 6) break;
@@ -773,7 +743,7 @@ async function downloadProductPdf(p, { productUrl, qrDataUrl }) {
   const stamp = `Generated • ${new Date().toLocaleString()}`;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.2);
-  doc.setTextColor(153, 163, 175);
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
   doc.text(stamp, margin, pageH - 8);
   doc.text(`1 / 1`, pageW - margin, pageH - 8, { align: "right" });
 
@@ -969,7 +939,9 @@ function CataloguePage({ products, loading, error, reload }) {
         </>
       )}
 
-      <div className="footer">© {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue</div>
+      <div className="footer">
+        © {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue
+      </div>
     </div>
   );
 }
@@ -1036,8 +1008,8 @@ function ProductDetailsPage({ products, loading }) {
 
   const tags = filterTags(p.merchTags);
 
-  // ✅ NEW: grouped, unique, no % values
-  const suitabilityUnique = useMemo(() => uniqueSuitabilityForUI(p, 14), [p]);
+  // ✅ grouped, unique, no % values, show more
+  const suitabilityUnique = useMemo(() => uniqueSuitabilityForUI(p, 50), [p]);
 
   const faq = getFaqList(p);
 
@@ -1060,6 +1032,7 @@ function ProductDetailsPage({ products, loading }) {
     <div className="app">
       <Header />
 
+      {/* offscreen QR for PDF */}
       <div style={{ position: "fixed", left: "-99999px", top: "-99999px" }}>
         <QRCodeCanvas ref={qrRef} value={productUrl} size={240} includeMargin />
       </div>
@@ -1168,13 +1141,10 @@ function ProductDetailsPage({ products, loading }) {
 
               {suitabilityUnique.length > 0 ? (
                 <div className="suitRows">
-                  {suitabilityUnique.slice(0, 14).map((r, idx) => (
+                  {suitabilityUnique.slice(0, 30).map((r, idx) => (
                     <div key={idx} className="suitRow">
-                      {/* left column */}
                       <div className="suitA">{r.seg}</div>
-                      {/* right column (unique uses, NO %) */}
                       <div className="suitB">{r.uses}</div>
-                      {/* keep third column empty to match your existing CSS grid */}
                       <div className="suitC" />
                     </div>
                   ))}
@@ -1217,7 +1187,9 @@ function ProductDetailsPage({ products, loading }) {
                   })}
                 </div>
                 <div className="ratingValue">{firstNonEmpty(fmtNum(p.ratingValue, 1), "0")}/5</div>
-                <div className="ratingMeta">{firstNonEmpty(fmtNum(p.ratingCount, 0), "0")} reviews</div>
+                <div className="ratingMeta">
+                  {firstNonEmpty(fmtNum(p.ratingCount, 0), "0")} reviews
+                </div>
               </div>
             </div>
           </div>
@@ -1248,7 +1220,8 @@ function ProductDetailsPage({ products, loading }) {
               </button>
             </div>
 
-            <div className="qrBig">
+            {/* ✅ QR "some down" */}
+            <div className="qrBig" style={{ marginTop: 18 }}>
               <QRCodeCanvas value={productUrl} size={260} includeMargin />
             </div>
 
