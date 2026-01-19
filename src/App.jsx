@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Routes, Route, Link, useParams, Navigate, useNavigate } from "react-router-dom";
 import "./App.css";
 
-
 import { QRCodeCanvas } from "qrcode.react";
 import { downloadProductPdf } from "./productPdf";
 
@@ -174,14 +173,7 @@ function parseSuitabilityLine(line) {
   const lastRaw = String(parts[parts.length - 1] || "");
   const scoreOnly = /\b\d{1,3}\s*%\b/.test(lastRaw) ? normalizeSuitabilityText(lastRaw) : "";
 
-  return {
-    seg: seg || "-",
-    use: use || "-",
-    score: scoreOnly || "",
-    a: seg || "-",
-    b: use || "",
-    c: "",
-  };
+  return { seg: seg || "-", use: use || "-", score: scoreOnly || "", a: seg || "-", b: use || "", c: "" };
 }
 function uniqueSuitabilityForUI(p, maxSeg = 12) {
   const rows = (p?.suitability || []).map(parseSuitabilityLine).filter(Boolean);
@@ -479,7 +471,9 @@ function CataloguePage({ products, loading, error, reload }) {
         </>
       )}
 
-      <div className="footer">© {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue</div>
+      <div className="footer">
+        © {new Date().getFullYear()} Amrita Global Enterprises • Internal catalogue
+      </div>
     </div>
   );
 }
@@ -503,11 +497,21 @@ function ProductDetailsPage({ products, loading }) {
   const { id } = useParams();
   const nav = useNavigate();
 
+  // ✅ ALL HOOKS MUST RUN BEFORE ANY RETURN
   const p = useMemo(() => products.find((x) => x.id === id), [products, id]);
   const [qrOpen, setQrOpen] = useState(false);
-
   const qrRef = useRef(null);
 
+  // keep derived values safe even when p is null
+  const suitabilityUnique = useMemo(() => (p ? uniqueSuitabilityForUI(p, 50) : []), [p]);
+  const faq = useMemo(() => (p ? getFaqList(p) : []), [p]);
+
+  // optional: close QR modal when switching product
+  useEffect(() => {
+    setQrOpen(false);
+  }, [id]);
+
+  // ✅ NOW RETURNS ARE SAFE
   if (loading) {
     return (
       <div className="app">
@@ -546,9 +550,6 @@ function ProductDetailsPage({ products, loading }) {
 
   const tags = filterTags(p.merchTags);
 
-  const suitabilityUnique = useMemo(() => uniqueSuitabilityForUI(p, 50), [p]);
-  const faq = getFaqList(p);
-
   const aboutHtml = firstNonEmpty(p.fullProductDescription, p.description, "");
   const aboutFallback = firstNonEmpty(
     stripHtml(p.fullProductDescription),
@@ -558,9 +559,7 @@ function ProductDetailsPage({ products, loading }) {
   );
 
   const onDownloadPdf = async () => {
-    await new Promise((r) => setTimeout(r, 50));
-    const qrCanvas = qrRef.current;
-    const qrDataUrl = qrCanvas && qrCanvas.toDataURL ? qrCanvas.toDataURL("image/png") : "";
+    const qrDataUrl = qrRef.current?.toDataURL?.("image/png") || "";
     await downloadProductPdf(p, { productUrl, qrDataUrl });
   };
 
@@ -570,7 +569,7 @@ function ProductDetailsPage({ products, loading }) {
 
       {/* offscreen QR for PDF */}
       <div style={{ position: "fixed", left: "-99999px", top: "-99999px" }}>
-        <QRCodeCanvas ref={qrRef} value={productUrl} size={240} includeMargin />
+        <QRCodeCanvas ref={qrRef} value={productUrl} size={520} includeMargin={false} />
       </div>
 
       <div className="detailsTop">
@@ -711,7 +710,7 @@ function ProductDetailsPage({ products, loading }) {
                   {[1, 2, 3, 4, 5].map((star) => {
                     const ratingValue = Number(p.ratingValue) || 0;
                     const filled = star <= ratingValue;
-                    const halfFilled = star - 0.5 <= ratingValue && star > ratingValue;
+                    const halfFilled = ratingValue >= star - 0.5 && ratingValue < star;
                     return (
                       <span
                         key={star}
@@ -796,7 +795,10 @@ export default function App() {
 
   return (
     <Routes>
-      <Route path="/" element={<CataloguePage products={products} loading={loading} error={error} reload={reload} />} />
+      <Route
+        path="/"
+        element={<CataloguePage products={products} loading={loading} error={error} reload={reload} />}
+      />
       <Route path="/product/:id" element={<ProductDetailsPage products={products} loading={loading} />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
