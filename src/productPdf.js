@@ -125,6 +125,28 @@ async function toDataUrl(url) {
     reader.readAsDataURL(blob);
   });
 }
+
+/* ---- NEW: get dataUrl intrinsic size (for perfect logo aspect) ---- */
+async function getDataUrlSize(dataUrl) {
+  const src = String(dataUrl || "");
+  if (!src.startsWith("data:image/")) return null;
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () =>
+      resolve({
+        w: img.naturalWidth || img.width || 0,
+        h: img.naturalHeight || img.height || 0,
+      });
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+function fitIntoBox(srcW, srcH, boxW, boxH) {
+  if (!srcW || !srcH) return { w: boxW, h: boxH, scale: 1 };
+  const s = Math.min(boxW / srcW, boxH / srcH);
+  return { w: srcW * s, h: srcH * s, scale: s };
+}
+
 function fillR(doc, x, y, w, h, rgb, r = 0) {
   doc.setFillColor(rgb[0], rgb[1], rgb[2]);
   if (r > 0) doc.roundedRect(x, y, w, h, r, r, "F");
@@ -430,17 +452,12 @@ function drawPhoneIcon(doc, cx, cy, r) {
   const a = r * 0.62;
   const b = r * 0.30;
 
-  // top left -> top middle
   doc.line(cx - a, cy - b, cx - r * 0.15, cy - r * 0.62);
-  // top middle -> top right
   doc.line(cx - r * 0.15, cy - r * 0.62, cx + a * 0.75, cy - b * 0.35);
 
-  // bottom left -> bottom middle
   doc.line(cx - a * 0.75, cy + b * 0.35, cx + r * 0.15, cy + r * 0.62);
-  // bottom middle -> bottom right
   doc.line(cx + r * 0.15, cy + r * 0.62, cx + a, cy + b);
 
-  // small bridge
   doc.line(cx - r * 0.10, cy - r * 0.05, cx + r * 0.10, cy + r * 0.05);
 }
 
@@ -448,14 +465,11 @@ function drawPhoneIcon(doc, cx, cy, r) {
 function drawWhatsappIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.85);
 
-  // bubble
   doc.circle(cx, cy - 0.15, r * 0.70, "S");
 
-  // tail (small)
   doc.line(cx - r * 0.22, cy + r * 0.45, cx - r * 0.52, cy + r * 0.78);
   doc.line(cx - r * 0.52, cy + r * 0.78, cx - r * 0.10, cy + r * 0.62);
 
-  // handset inside
   doc.setLineWidth(0.85);
   doc.line(cx - r * 0.24, cy - r * 0.02, cx - r * 0.04, cy - r * 0.20);
   doc.line(cx - r * 0.04, cy - r * 0.20, cx + r * 0.20, cy - r * 0.02);
@@ -463,7 +477,7 @@ function drawWhatsappIcon(doc, cx, cy, r) {
   doc.line(cx - r * 0.02, cy + r * 0.22, cx + r * 0.22, cy + r * 0.06);
 }
 
-/* mail: envelope (no messy X) */
+/* mail: envelope */
 function drawMailIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.95);
 
@@ -473,11 +487,9 @@ function drawMailIcon(doc, cx, cy, r) {
   const y = cy - h / 2;
 
   doc.rect(x, y, w, h, "S");
-  // flap (V)
   const midY = y + h * 0.58;
   doc.line(x, y, cx, midY);
   doc.line(x + w, y, cx, midY);
-  // bottom edge (helps read as envelope)
   doc.line(x, y + h, x + w, y + h);
 }
 
@@ -486,7 +498,7 @@ export async function downloadProductPdf(
   p,
   {
     productUrl,
-    qrDataUrl, // optional, if you already generate QR elsewhere
+    qrDataUrl,
     logoPath = "/logo1.png",
     companyName = "Amrita Global Enterprises",
     phone1 = "+91-9011234321",
@@ -548,15 +560,20 @@ export async function downloadProductPdf(
   let logoDataUrl = null;
   try { logoDataUrl = await toDataUrl(logoPath); } catch { logoDataUrl = null; }
 
+  // ✅ NEW: logo size for perfect aspect-fit
+  const logoSize = logoDataUrl ? await getDataUrlSize(logoDataUrl) : null;
+
   // ✅ dynamic QR (per product page)
   let finalQrDataUrl = null;
   if (qrDataUrl && typeof qrDataUrl === "string") finalQrDataUrl = qrDataUrl;
   else if (productLink) finalQrDataUrl = await makeQrDataUrl(productLink);
 
   /* ------------------------------ HEADER ------------------------------ */
-  const headerTop = 7;
-  const logoW = 16;
-  const logoH = 13;
+  const headerTop = 6.5;
+
+  // ✅ CHANGE #1: logo slightly wider + aspect-fit (no distortion)
+  const logoBoxW = 22;   // wider
+  const logoBoxH = 14.5; // clean height
   const gap = 5;
 
   doc.setFont("helvetica", "bold");
@@ -564,18 +581,34 @@ export async function downloadProductPdf(
   doc.setTextColor(0, 0, 0);
 
   const nameW = doc.getTextWidth(companyName);
-  const totalW = logoW + gap + nameW;
+  const totalW = logoBoxW + gap + nameW;
   const startX = Math.max(10, (pageW - totalW) / 2);
 
   const logoX = startX;
   const logoY = headerTop;
 
   if (logoDataUrl) {
-    try { doc.addImage(logoDataUrl, "PNG", logoX, logoY, logoW, logoH); } catch {}
-  }
-  doc.text(companyName, logoX + logoW + gap, headerTop + 10.8);
+    const isPng = String(logoDataUrl).startsWith("data:image/png");
+    const isJpeg =
+      String(logoDataUrl).startsWith("data:image/jpeg") || String(logoDataUrl).startsWith("data:image/jpg");
+    const fmt = isPng ? "PNG" : isJpeg ? "JPEG" : "PNG";
 
-  const lineY = headerTop + 17;
+    const srcW = logoSize?.w || 0;
+    const srcH = logoSize?.h || 0;
+    const fit = fitIntoBox(srcW, srcH, logoBoxW, logoBoxH);
+
+    const drawW = fit.w || logoBoxW;
+    const drawH = fit.h || logoBoxH;
+    const dx = logoX + (logoBoxW - drawW) / 2;
+    const dy = logoY + (logoBoxH - drawH) / 2;
+
+    try { doc.addImage(logoDataUrl, fmt, dx, dy, drawW, drawH); } catch {}
+  }
+
+  // text baseline aligned with logo box
+  doc.text(companyName, logoX + logoBoxW + gap, headerTop + 11.0);
+
+  const lineY = headerTop + 17.2;
   doc.setDrawColor(GOLD_LINE[0], GOLD_LINE[1], GOLD_LINE[2]);
   doc.setLineWidth(0.9);
   doc.line(12, lineY, pageW - 12, lineY);
@@ -591,16 +624,18 @@ export async function downloadProductPdf(
   const M = 14;
   const heroTop = 27;
 
-  // Fabric code (bold + underline)
+  // ✅ CHANGE #2: fabric code not hugging the corner (shift right a bit)
+  const codeX = M + 2.5;
+
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12.6);
   doc.setTextColor(0, 0, 0);
-  doc.text(String(code), M, heroTop + 7.2);
+  doc.text(String(code), codeX, heroTop + 7.2);
 
   const codeW = doc.getTextWidth(String(code));
   doc.setDrawColor(GOLD_LINE_DARK[0], GOLD_LINE_DARK[1], GOLD_LINE_DARK[2]);
   doc.setLineWidth(0.4);
-  doc.line(M, heroTop + 8.9, M + Math.min(codeW, 34), heroTop + 8.9);
+  doc.line(codeX, heroTop + 8.9, codeX + Math.min(codeW, 34), heroTop + 8.9);
 
   // image card
   const imgX = M;
@@ -818,7 +853,10 @@ export async function downloadProductPdf(
   let by = finishY + finishH + 9;
 
   const qrX = pageW - M - qrCardW;
-  const qrY = Math.min(by - 6, contentMaxY - qrCardH);
+
+  // ✅ CHANGE #3: QR a bit DOWN (was by - 6)
+  const qrY = Math.min(by - 2, contentMaxY - qrCardH);
+
   const leftMaxW = showQr ? (qrX - M - qrGap) : (pageW - M * 2);
 
   if (showQr) {
@@ -826,18 +864,15 @@ export async function downloadProductPdf(
     fillR(doc, qrX, qrY, qrCardW, qrCardH, [255, 255, 255], 2.8);
     strokeR(doc, qrX, qrY, qrCardW, qrCardH, BORDER, 2.8, 0.25);
 
-    // QR image
     try {
       doc.addImage(finalQrDataUrl, "PNG", qrX + (qrCardW - qrSize) / 2, qrY + 6, qrSize, qrSize);
     } catch {}
 
-    // label
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.6);
     doc.setTextColor(30, 41, 59);
     doc.text("Scan for details", qrX + qrCardW / 2, qrY + 6 + qrSize + 7.2, { align: "center" });
 
-    // clickable QR
     if (productLink) {
       try { doc.link(qrX, qrY, qrCardW, qrCardH, { url: productLink }); } catch {}
     }
@@ -913,24 +948,14 @@ export async function downloadProductPdf(
   const webUrl = normalizeUrl(website);
 
   const footerItems = [
-    {
-      text: String(phone1 || ""),
-      color: [194, 120, 62],
-      icon: "phone",
-      url: tel1 ? `tel:${tel1}` : "",
-    },
+    { text: String(phone1 || ""), color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" },
     {
       text: String(phone2 || ""),
       color: [22, 163, 74],
       icon: "whatsapp",
       url: wa2 ? `https://wa.me/${wa2}` : (tel2 ? `tel:${tel2}` : ""),
     },
-    {
-      text: String(website || ""),
-      color: [30, 64, 175],
-      icon: "mail",
-      url: webUrl,
-    },
+    { text: String(website || ""), color: [30, 64, 175], icon: "mail", url: webUrl },
   ].filter((x) => x.text && x.text.trim());
 
   doc.setFont("helvetica", "bold");
@@ -947,7 +972,6 @@ export async function downloadProductPdf(
     const cx = fx + iconR;
     const cy = footerY - 2;
 
-    // clickable area (icon + text)
     const itemW = widths[i];
     const clickX = fx;
     const clickY = footerY - 7.5;
@@ -978,7 +1002,6 @@ export async function downloadProductPdf(
     doc.text(addrLines, pageW / 2, pageH - 10, { align: "center" });
   }
 
-  // optional: make whole page clickable to product
   if (productLink) {
     try { doc.link(M, 0, pageW - M * 2, pageH, { url: productLink }); } catch {}
   }
