@@ -94,7 +94,6 @@ function fitOneLine(doc, text, maxW) {
 
 /* ------------------------------ images ------------------------------ */
 function getPrimaryImage(p) {
-  // still only DB fields; no SVG/placeholder fallback
   const candidates = [
     p?.image1CloudUrl,
     p?.image1ThumbUrl,
@@ -178,7 +177,7 @@ function normalizeTel(s) {
   return cleanStr(s).replace(/[^\d+]/g, "").trim();
 }
 function normalizeWaDigits(s) {
-  return cleanStr(s).replace(/[^\d]/g, "").trim(); // no +
+  return cleanStr(s).replace(/[^\d]/g, "").trim();
 }
 function normalizeUrl(u) {
   const s = cleanStr(u);
@@ -214,7 +213,7 @@ async function makeQrDataUrl(data) {
 /* ------------------------------ Stars (NO BORDER / correct partial) ------------------------------ */
 function normalizeRatingTo5(val) {
   const n = Number(val);
-  if (!Number.isFinite(n)) return null; // IMPORTANT: no fallback rating
+  if (!Number.isFinite(n)) return null;
   if (n <= 5) return Math.max(0, Math.min(5, n));
   if (n <= 10) return Math.max(0, Math.min(5, n / 2));
   if (n <= 100) return Math.max(0, Math.min(5, (n * 5) / 100));
@@ -242,29 +241,18 @@ function fillStar(doc, pts, rgb) {
   starPath(doc, pts);
   doc.fill();
 }
-function drawStarNoStroke(
-  doc,
-  cx,
-  cy,
-  size,
-  fillPercent,
-  goldColor,
-  emptyColor,
-) {
+function drawStarNoStroke(doc, cx, cy, size, fillPercent, goldColor, emptyColor) {
   const { pts, outer } = buildStarPoints(cx, cy, size);
   const fill = Math.max(0, Math.min(1, Number(fillPercent) || 0));
 
-  // base empty star (filled)
   fillStar(doc, pts, emptyColor);
   if (fill <= 0) return;
 
-  // full gold star
   if (fill >= 1) {
     fillStar(doc, pts, goldColor);
     return;
   }
 
-  // partial: clip to star, fill rect (no stroke)
   try {
     doc.saveGraphicsState();
 
@@ -284,7 +272,7 @@ function drawStarNoStroke(
 }
 function drawStars(doc, x, yCenter, ratingValue, opts = {}) {
   const r = normalizeRatingTo5(ratingValue);
-  if (r === null) return; // IMPORTANT: if DB has no rating, show nothing
+  if (r === null) return;
 
   const size = Number(opts.size ?? 3.0);
   const gap = Number(opts.gap ?? 0.5);
@@ -301,15 +289,7 @@ function drawStars(doc, x, yCenter, ratingValue, opts = {}) {
     if (r >= starEnd) fillPercent = 1;
     else if (r > starStart) fillPercent = r - starStart;
 
-    drawStarNoStroke(
-      doc,
-      cx,
-      yCenter,
-      size,
-      fillPercent,
-      goldColor,
-      emptyColor,
-    );
+    drawStarNoStroke(doc, cx, yCenter, size, fillPercent, goldColor, emptyColor);
     cx += size + gap;
   }
 }
@@ -360,13 +340,10 @@ function isHomeOrAccessory(seg) {
     s.includes("work")
   );
 }
-function buildSuitabilityBulletsDynamic(
-  p,
-  { maxUsesPerSeg = 3, showPercent = false } = {},
-) {
+function buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg = 3, showPercent = false } = {}) {
   const items = (p?.suitability || []).map(parseSuitabilityItem).filter(Boolean);
 
-  const map = new Map(); // seg -> use -> best pct
+  const map = new Map();
   for (const it of items) {
     if (!map.has(it.seg)) map.set(it.seg, new Map());
     const useMap = map.get(it.seg);
@@ -401,12 +378,8 @@ function buildSuitabilityBulletsDynamic(
 
   groups.sort((a, b) => (b._score ?? 0) - (a._score ?? 0));
 
-  const apparel = groups
-    .filter((g) => !g._home)
-    .map(({ label, text }) => ({ label, text }));
-  const homeAcc = groups
-    .filter((g) => g._home)
-    .map(({ label, text }) => ({ label, text }));
+  const apparel = groups.filter((g) => !g._home).map(({ label, text }) => ({ label, text }));
+  const homeAcc = groups.filter((g) => g._home).map(({ label, text }) => ({ label, text }));
 
   return { apparel, homeAcc };
 }
@@ -466,12 +439,12 @@ function drawMailIcon(doc, cx, cy, r) {
 
 /* ------------------------------ Company Information (dynamic, NO DEFAULT FALLBACKS) ------------------------------ */
 const _ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
-const DEFAULT_COMPANY_INFO_URL = cleanStr(_ENV.VITE_COMPANY_INFORMATION).replace(
-  /\/$/,
-  "",
-);
+const DEFAULT_COMPANY_INFO_URL = cleanStr(_ENV.VITE_COMPANY_INFORMATION).replace(/\/$/, "");
 const DEFAULT_ESPO_API_KEY = cleanStr(_ENV.VITE_X_API_KEY);
 const DEFAULT_COMPANY_INFO_ID = cleanStr(_ENV.VITE_COMPANY_INFORMATION_ID);
+
+/* ✅ NEW: Product list base for options count */
+const DEFAULT_PRODUCT_LIST_URL = cleanStr(_ENV.VITE_ESPO_BASEURL).replace(/\/$/, "");
 
 let _companyInfoCache = null;
 let _companyInfoPromise = null;
@@ -494,12 +467,9 @@ function pickCompanyRecord(list, { preferId } = {}) {
   const arr = Array.isArray(list) ? list.filter((x) => !x?.deleted) : [];
   if (!arr.length) return null;
 
-  const byId = preferId
-    ? arr.find((x) => cleanStr(x?.id) === cleanStr(preferId))
-    : null;
+  const byId = preferId ? arr.find((x) => cleanStr(x?.id) === cleanStr(preferId)) : null;
   if (byId) return byId;
 
-  // latest versionNumber if exists
   const sorted = [...arr].sort(
     (a, b) => Number(b?.versionNumber || 0) - Number(a?.versionNumber || 0),
   );
@@ -517,10 +487,8 @@ async function fetchCompanyInformation({
   try {
     const u = new URL(base);
     if (!u.searchParams.has("maxSize")) u.searchParams.set("maxSize", "200");
-    if (!u.searchParams.has("sortBy"))
-      u.searchParams.set("sortBy", "versionNumber");
-    if (!u.searchParams.has("sortDirection"))
-      u.searchParams.set("sortDirection", "DESC");
+    if (!u.searchParams.has("sortBy")) u.searchParams.set("sortBy", "versionNumber");
+    if (!u.searchParams.has("sortDirection")) u.searchParams.set("sortDirection", "DESC");
 
     const headers = {};
     if (apiKey) {
@@ -528,7 +496,7 @@ async function fetchCompanyInformation({
       headers["Authorization"] = `Bearer ${apiKey}`;
     }
 
-    const res = await fetch(u.toString(), { headers });
+    const res = await fetch(u.toString(), { headers, mode: "cors" });
     if (!res.ok) return null;
 
     const data = await res.json();
@@ -552,12 +520,90 @@ async function getCompanyInformationCached(opts = {}) {
   return _companyInfoPromise;
 }
 
+/* ✅ NEW: Options count by collectionId (manual count, ignores negative total) */
+const _collectionCountCache = new Map();   // collectionId -> number
+const _collectionCountPromise = new Map(); // collectionId -> Promise<number|null>
+
+async function fetchCollectionProductCount({
+  productUrl = DEFAULT_PRODUCT_LIST_URL,
+  apiKey = DEFAULT_ESPO_API_KEY,
+  collectionId,
+  pageSize = 200,
+  maxPages = 200, // safety
+} = {}) {
+  const base = cleanStr(productUrl);
+  const cid = cleanStr(collectionId);
+  if (!base || !cid) return null;
+
+  const headers = {};
+  if (apiKey) {
+    headers["X-Api-Key"] = apiKey;
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  let offset = 0;
+  let count = 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    try {
+      const u = new URL(base);
+
+      u.searchParams.set("maxSize", String(pageSize));
+      u.searchParams.set("offset", String(offset));
+
+      // where[0] deleted=false
+      u.searchParams.set("where[0][type]", "equals");
+      u.searchParams.set("where[0][attribute]", "deleted");
+      u.searchParams.set("where[0][value]", "false");
+
+      // where[1] collectionId=cid
+      u.searchParams.set("where[1][type]", "equals");
+      u.searchParams.set("where[1][attribute]", "collectionId");
+      u.searchParams.set("where[1][value]", cid);
+
+      const res = await fetch(u.toString(), { headers, mode: "cors" });
+      if (!res.ok) break;
+
+      const data = await res.json();
+      const list = Array.isArray(data?.list) ? data.list : [];
+
+      // ✅ manual count (ignore "total" completely)
+      count += list.length;
+
+      if (list.length < pageSize) break; // last page
+      offset += pageSize;
+    } catch {
+      break;
+    }
+  }
+
+  return count;
+}
+
+async function getCollectionProductCountCached(opts = {}) {
+  const cid = cleanStr(opts?.collectionId);
+  if (!cid) return null;
+
+  if (_collectionCountCache.has(cid)) return _collectionCountCache.get(cid);
+  if (_collectionCountPromise.has(cid)) return _collectionCountPromise.get(cid);
+
+  const prom = (async () => {
+    const n = await fetchCollectionProductCount(opts);
+    if (Number.isFinite(n)) _collectionCountCache.set(cid, n);
+    else _collectionCountCache.set(cid, null);
+    _collectionCountPromise.delete(cid);
+    return _collectionCountCache.get(cid);
+  })();
+
+  _collectionCountPromise.set(cid, prom);
+  return prom;
+}
+
 /* ------------------------------ width/weight (NO "-" placeholders) ------------------------------ */
 function getWidthText(p) {
   const cm = p?.cm;
   const inch = p?.inch;
-  if (isNum(cm) && isNum(inch))
-    return `${fmtNum(cm, 0)} cm / ${fmtNum(inch, 0)} inch`;
+  if (isNum(cm) && isNum(inch)) return `${fmtNum(cm, 0)} cm / ${fmtNum(inch, 0)} inch`;
   if (isNum(inch)) return `${fmtNum(inch, 0)} inch`;
   if (isNum(cm)) return `${fmtNum(cm, 0)} cm`;
   return "";
@@ -583,14 +629,18 @@ export async function downloadProductPdf(
     companyInfoId = DEFAULT_COMPANY_INFO_ID,
     espoApiKey = DEFAULT_ESPO_API_KEY,
 
+    // ✅ NEW: used to compute options count from API
+    productListUrl = DEFAULT_PRODUCT_LIST_URL,
+    collectionId, // pass selected collectionId here (NOT static)
+
     // optional manual overrides (if passed, they win)
     companyName,
     phone1,
-    phone2, // whatsappNumber
-    email, // primaryEmail
+    phone2,
+    email,
     addressLine,
 
-    // IMPORTANT: use only DB field p.optionsCount unless explicitly passed
+    // IMPORTANT: if explicitly passed, it wins
     optionsCount,
   } = {},
 ) {
@@ -602,15 +652,12 @@ export async function downloadProductPdf(
   });
 
   // dynamic fields (NO hardcoded fallback strings)
-  const dynamicCompanyName =
-    cleanStr(companyName) || cleanStr(ci?.legalName) || cleanStr(ci?.name);
+  const dynamicCompanyName = cleanStr(companyName) || cleanStr(ci?.legalName) || cleanStr(ci?.name);
   const dynamicPhone1 = cleanStr(phone1) || cleanStr(ci?.phone1);
   const dynamicPhone2 = cleanStr(phone2) || cleanStr(ci?.whatsappNumber);
   const dynamicEmail = cleanStr(email) || cleanStr(ci?.primaryEmail);
   const dynamicAddress =
-    cleanStr(addressLine) ||
-    buildAddressLineFromCompany(ci) ||
-    cleanStr(ci?.addressStreet);
+    cleanStr(addressLine) || buildAddressLineFromCompany(ci) || cleanStr(ci?.addressStreet);
 
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -630,42 +677,54 @@ export async function downloadProductPdf(
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageW, pageH, "F");
 
-  // IMPORTANT: use exact DB fields (no fallback to other fields)
   const code = cleanStr(p?.fabricCode);
   const title = cleanStr(p?.productTitle);
   const tagline = cleanStr(p?.productTagline);
   const shortDesc = cleanStr(p?.shortProductDescription);
 
   const categoryPill = toUpperLabel(p?.category);
-
-  // ✅ CHANGE #1: supplyModel show without hyphens
   const supplyPill = hyphenToSpace(p?.supplyModel);
 
-  // rating: show only if DB has a value (no default 0)
   const rawRating =
-    p?.ratingValue !== undefined &&
-    p?.ratingValue !== null &&
-    cleanStr(p?.ratingValue) !== ""
+    p?.ratingValue !== undefined && p?.ratingValue !== null && cleanStr(p?.ratingValue) !== ""
       ? p?.ratingValue
       : p?.rating !== undefined && p?.rating !== null && cleanStr(p?.rating) !== ""
         ? p?.rating
-        : p?.ratingPercent !== undefined &&
-            p?.ratingPercent !== null &&
-            cleanStr(p?.ratingPercent) !== ""
+        : p?.ratingPercent !== undefined && p?.ratingPercent !== null && cleanStr(p?.ratingPercent) !== ""
           ? p?.ratingPercent
           : null;
 
-  // options: ONLY p.optionsCount (or explicit optionsCount param)
-  const optCount = Number.isFinite(Number(optionsCount))
-    ? Number(optionsCount)
-    : Number.isFinite(Number(p?.optionsCount))
-      ? Number(p.optionsCount)
-      : null;
+  /* ✅ UPDATED: options count priority
+     1) explicit optionsCount
+     2) API count by selected collectionId (manual list counting)
+     3) fallback to p.optionsCount if exists */
+  let optCount = Number.isFinite(Number(optionsCount)) ? Number(optionsCount) : null;
+
+  if (optCount === null) {
+    const cid =
+      cleanStr(collectionId) ||
+      cleanStr(p?.collectionId) ||
+      cleanStr(p?.collection?.id);
+
+    if (cid) {
+      const n = await getCollectionProductCountCached({
+        productUrl: productListUrl,
+        apiKey: espoApiKey,
+        collectionId: cid,
+        pageSize: 200,
+      });
+      if (Number.isFinite(n)) optCount = Number(n);
+    }
+
+    if (optCount === null && Number.isFinite(Number(p?.optionsCount))) {
+      optCount = Number(p.optionsCount);
+    }
+  }
 
   // links
   const productLink = productUrl ? normalizeUrl(productUrl) : "";
 
-  // images (NO placeholder image)
+  // images
   const imgUrl = getPrimaryImage(p);
   let imgDataUrl = null;
   try {
@@ -728,8 +787,7 @@ export async function downloadProductPdf(
     } catch {}
   }
 
-  if (headerCompanyName)
-    doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
+  if (headerCompanyName) doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
 
   const lineY = headerTop + 17.2;
   doc.setDrawColor(GOLD_LINE[0], GOLD_LINE[1], GOLD_LINE[2]);
@@ -749,7 +807,6 @@ export async function downloadProductPdf(
 
   const codeX = M + 2.5;
 
-  // code (draw only if exists)
   if (code) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12.6);
@@ -772,12 +829,10 @@ export async function downloadProductPdf(
   fillR(doc, imgX, imgY, imgW, imgH, [255, 255, 255], 2.8);
   strokeR(doc, imgX, imgY, imgW, imgH, BORDER, 2.8, 0.25);
 
-  // image (only if DB has URL)
   if (imgDataUrl && typeof imgDataUrl === "string") {
     const isPng = imgDataUrl.startsWith("data:image/png");
     const isJpeg =
-      imgDataUrl.startsWith("data:image/jpeg") ||
-      imgDataUrl.startsWith("data:image/jpg");
+      imgDataUrl.startsWith("data:image/jpeg") || imgDataUrl.startsWith("data:image/jpg");
     const fmt = isPng ? "PNG" : isJpeg ? "JPEG" : null;
     if (fmt) {
       try {
@@ -786,11 +841,12 @@ export async function downloadProductPdf(
     }
   }
 
-  // options badge (only if optCount exists)
-  if (Number.isFinite(optCount) && optCount > 0) {
+  // options badge (inside image bottom-middle)
+  if (Number.isFinite(optCount) && optCount >= 0) {
     const badgeW = 34;
     const badgeH = 7.0;
-    const bx = imgX + 14;
+
+    const bx = imgX + (imgW - badgeW) / 2; // bottom-middle
     const by2 = imgY + imgH - badgeH - 7;
 
     fillR(doc, bx, by2, badgeW, badgeH, [67, 56, 202], 2.4);
@@ -814,7 +870,7 @@ export async function downloadProductPdf(
   const rightX = imgX + imgW + 12;
   const rightW = pageW - M - rightX;
 
-  // pills (draw only if DB has values)
+  // pills
   const pillsY = heroTop + 10;
   let px = rightX;
 
@@ -844,7 +900,6 @@ export async function downloadProductPdf(
     px += p2.w + 4;
   }
 
-  // rating pill (draw only if DB has rating)
   if (rawRating !== null) {
     const ratingPillH = 7.2;
     const ratingPillW = 44;
@@ -861,7 +916,7 @@ export async function downloadProductPdf(
     });
   }
 
-  /* ---- Title + Tagline (draw only if DB has text) ---- */
+  /* ---- Title + Tagline ---- */
   const titleTopY = pillsY + 16.5;
   const textBottomY = imgY + imgH - 2.0;
 
@@ -888,11 +943,7 @@ export async function downloadProductPdf(
       const tagH = tagLines.length * tagLH;
       const avail = textBottomY - titleTopY;
 
-      if (
-        titleH + (tagLines.length ? minGap : 0) + tagH <= avail ||
-        titleSize <= 13.2
-      )
-        break;
+      if (titleH + (tagLines.length ? minGap : 0) + tagH <= avail || titleSize <= 13.2) break;
       titleSize -= 0.6;
     }
 
@@ -916,7 +967,7 @@ export async function downloadProductPdf(
     }
   }
 
-  /* ---------------- paragraph under hero (only if DB has text) ---------------- */
+  /* ---------------- paragraph under hero ---------------- */
   const paraY = imgY + imgH + 10;
   if (shortDesc) {
     doc.setFont("helvetica", "normal");
@@ -927,7 +978,7 @@ export async function downloadProductPdf(
     doc.text(paraLines, M, paraY);
   }
 
-  /* ---------------- Specs table (NO "-" placeholders) ---------------- */
+  /* ---------------- Specs table ---------------- */
   const tableX = M;
   const tableY = paraY + (shortDesc ? 10 : 0);
   const tableW = pageW - M * 2;
@@ -944,8 +995,7 @@ export async function downloadProductPdf(
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.25);
   doc.line(tableX + cellW, tableY, tableX + cellW, tableY + rowH * 4);
-  for (let i = 1; i < 4; i++)
-    doc.line(tableX, tableY + rowH * i, tableX + tableW, tableY + rowH * i);
+  for (let i = 1; i < 4; i++) doc.line(tableX, tableY + rowH * i, tableX + tableW, tableY + rowH * i);
   doc.line(tableX, tableY + rowH * 4, tableX + tableW, tableY + rowH * 4);
 
   function drawCell(x, y0, w, label, value, { boldValue = false } = {}) {
@@ -973,19 +1023,11 @@ export async function downloadProductPdf(
   drawCell(tableX, tableY + rowH * 1, cellW, "Weight", getWeightText(p));
   drawCell(tableX + cellW, tableY + rowH * 1, cellW, "Design", cleanStr(p?.design));
 
-  drawCell(
-    tableX,
-    tableY + rowH * 2,
-    cellW,
-    "Structure",
-    cleanStr(p?.structure),
-    { boldValue: true },
-  );
+  drawCell(tableX, tableY + rowH * 2, cellW, "Structure", cleanStr(p?.structure), { boldValue: true });
   drawCell(tableX + cellW, tableY + rowH * 2, cellW, "Colors", joinArr(p?.color));
 
   drawCell(tableX, tableY + rowH * 3, cellW, "Motif", cleanStr(p?.motif));
 
-  // Sales MOQ (only if DB has salesMOQ)
   const moqVal = (() => {
     const moq = isNum(p?.salesMOQ) ? fmtNum(p.salesMOQ, 0) : cleanStr(p?.salesMOQ);
     if (!moq) return "";
@@ -994,7 +1036,6 @@ export async function downloadProductPdf(
   })();
   drawCell(tableX + cellW, tableY + rowH * 3, cellW, "Sales MOQ", moqVal);
 
-  // finish full width (only if DB has finish)
   const finishY = tableY + rowH * 4;
   const finishLabelW = 24;
   const valueX = tableX + finishLabelW;
@@ -1005,25 +1046,20 @@ export async function downloadProductPdf(
   doc.setTextColor(30, 64, 175);
   doc.text("FINISH", tableX + 8, finishY + 8.0);
 
-  // ✅ CHANGE #2: finish values show only after hyphen
   const finishText = joinFinish(p?.finish);
 
   if (finishText) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.8);
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
-     const padLeft = 6;            // ✅ start just next to FINISH
-  const maxTextW = valueW - 10; // ✅ keep inside cell
-  const finishLines = pdfWrap(doc, finishText, maxTextW).slice(0, 2);
-
+    const padLeft = 6;
+    const maxTextW = valueW - 10;
+    const finishLines = pdfWrap(doc, finishText, maxTextW).slice(0, 2);
     doc.text(finishLines, valueX + padLeft, finishY + 8.0);
   }
 
   /* ---------------- Suitability + QR ---------------- */
-  const suit = buildSuitabilityBulletsDynamic(p, {
-    maxUsesPerSeg: 3,
-    showPercent: false,
-  });
+  const suit = buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg: 3, showPercent: false });
 
   const showQr = !!finalQrDataUrl;
   const qrCardW = 34;
@@ -1044,22 +1080,13 @@ export async function downloadProductPdf(
     strokeR(doc, qrX, qrY, qrCardW, qrCardH, BORDER, 2.8, 0.25);
 
     try {
-      doc.addImage(
-        finalQrDataUrl,
-        "PNG",
-        qrX + (qrCardW - qrSize) / 2,
-        qrY + 6,
-        qrSize,
-        qrSize,
-      );
+      doc.addImage(finalQrDataUrl, "PNG", qrX + (qrCardW - qrSize) / 2, qrY + 6, qrSize, qrSize);
     } catch {}
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.6);
     doc.setTextColor(30, 41, 59);
-    doc.text("Scan for details", qrX + qrCardW / 2, qrY + 6 + qrSize + 7.2, {
-      align: "center",
-    });
+    doc.text("Scan for details", qrX + qrCardW / 2, qrY + 6 + qrSize + 7.2, { align: "center" });
 
     if (productLink) {
       try {
@@ -1128,17 +1155,16 @@ export async function downloadProductPdf(
     }
   }
 
-  /* ---------------- FOOTER (dynamic, NO fallback merge) ---------------- */
+  /* ---------------- FOOTER ---------------- */
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.35);
   doc.line(M, pageH - 32, pageW - M, pageH - 32);
 
-  
   const footerY = footerLineY + 10;
   const iconR = 4.0;
 
   const footerPhone1 = cleanStr(dynamicPhone1);
-  const footerPhone2 = cleanStr(dynamicPhone2); // whatsapp
+  const footerPhone2 = cleanStr(dynamicPhone2);
   const footerEmail = cleanStr(dynamicEmail);
 
   const tel1 = normalizeTel(footerPhone1);
@@ -1146,29 +1172,17 @@ export async function downloadProductPdf(
 
   const footerItems = [
     footerPhone1
-      ? {
-          text: footerPhone1,
-          color: [194, 120, 62],
-          icon: "phone",
-          url: tel1 ? `tel:${tel1}` : "",
-        }
+      ? { text: footerPhone1, color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" }
       : null,
     footerPhone2
-      ? {
-          text: footerPhone2,
-          color: [22, 163, 74],
-          icon: "whatsapp",
-          url: wa2 ? `https://wa.me/${wa2}` : "",
-        }
+      ? { text: footerPhone2, color: [22, 163, 74], icon: "whatsapp", url: wa2 ? `https://wa.me/${wa2}` : "" }
       : null,
     footerEmail
       ? {
           text: footerEmail,
           color: [30, 64, 175],
           icon: "mail",
-          url: looksLikeEmail(footerEmail)
-            ? `mailto:${normalizeEmail(footerEmail)}`
-            : "",
+          url: looksLikeEmail(footerEmail) ? `mailto:${normalizeEmail(footerEmail)}` : "",
         }
       : null,
   ].filter(Boolean);
@@ -1178,11 +1192,8 @@ export async function downloadProductPdf(
   doc.setTextColor(30, 41, 59);
 
   const gapX = 10;
-  const widths = footerItems.map(
-    (it) => iconR * 2 + 3 + doc.getTextWidth(it.text),
-  );
-  const total =
-    widths.reduce((a, b) => a + b, 0) + gapX * (footerItems.length - 1);
+  const widths = footerItems.map((it) => iconR * 2 + 3 + doc.getTextWidth(it.text));
+  const total = widths.reduce((a, b) => a + b, 0) + gapX * (footerItems.length - 1);
   let fx = Math.max(M, (pageW - total) / 2);
 
   for (let i = 0; i < footerItems.length; i++) {
@@ -1214,7 +1225,6 @@ export async function downloadProductPdf(
     fx += itemW + gapX;
   }
 
-  // address (only if DB has address)
   if (dynamicAddress) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
@@ -1223,14 +1233,12 @@ export async function downloadProductPdf(
     doc.text(addrLines, pageW / 2, pageH - 10, { align: "center" });
   }
 
-  // full-page link only if productLink exists
   if (productLink) {
     try {
       doc.link(M, 0, pageW - M * 2, pageH, { url: productLink });
     } catch {}
   }
 
-  // filename: use fabricCode if present, else "product"
   const fileName = code ? `${code}.pdf` : "product.pdf";
   doc.save(fileName);
 }
