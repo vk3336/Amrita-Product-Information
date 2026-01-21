@@ -2,24 +2,14 @@
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
 
-/* ------------------------------ helpers ------------------------------ */
-function safeJoin(val, sep = ", ") {
-  if (Array.isArray(val)) return val.filter(Boolean).join(sep);
-  if (val === null || val === undefined) return "";
-  return String(val);
+/* ------------------------------ helpers (NO PLACEHOLDERS) ------------------------------ */
+function cleanStr(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).trim();
 }
-function firstNonEmpty(...vals) {
-  for (const v of vals) {
-    if (Array.isArray(v)) {
-      const s = v.filter(Boolean).join(", ");
-      if (s) return s;
-    } else if (typeof v === "string") {
-      if (v.trim()) return v.trim();
-    } else if (v !== null && v !== undefined) {
-      return String(v);
-    }
-  }
-  return "";
+function joinArr(val, sep = ", ") {
+  if (Array.isArray(val)) return val.map(cleanStr).filter(Boolean).join(sep);
+  return cleanStr(val);
 }
 function isNum(v) {
   const n = Number(v);
@@ -41,144 +31,42 @@ function stripHtml(html) {
     return String(html || "");
   }
 }
-function fallbackImageSvg(text = "AGE") {
-  const safe = String(text).replace(/</g, "").slice(0, 18);
-  const svg = `
-  <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200">
-    <defs>
-      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#0f172a"/>
-        <stop offset="1" stop-color="#0b7285"/>
-      </linearGradient>
-    </defs>
-    <rect width="1200" height="1200" fill="url(#g)"/>
-    <circle cx="940" cy="260" r="260" fill="rgba(255,255,255,0.10)"/>
-    <circle cx="220" cy="980" r="320" fill="rgba(255,255,255,0.06)"/>
-    <text x="90" y="640" font-size="140" font-family="Arial" font-weight="800" fill="white" opacity="0.95">
-      ${safe}
-    </text>
-  </svg>`;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-function getPrimaryImage(p) {
-  return firstNonEmpty(
-    p?.image1CloudUrl,
-    p?.image1ThumbUrl,
-    p?.image2CloudUrl,
-    p?.image2ThumbUrl,
-    p?.image3CloudUrl,
-    p?.image3ThumbUrl
-  );
-}
-function getDisplayCode(p) {
-  return firstNonEmpty(p?.fabricCode, p?.vendorFabricCode, p?.name, p?.productslug, p?.id);
-}
-function getComposition(p) {
-  return firstNonEmpty(safeJoin(p?.content), p?.composition);
-}
-function getFinish(p) {
-  return firstNonEmpty(safeJoin(p?.finish), p?.finish);
-}
-function getStructure(p) {
-  return firstNonEmpty(p?.structure, p?.weave);
-}
-function getWidthText(p) {
-  const cm = p?.cm;
-  const inch = p?.inch;
-  if (isNum(cm) && isNum(inch)) return `${fmtNum(cm, 0)} cm / ${fmtNum(inch, 0)} inch`;
-  if (isNum(inch)) return `${fmtNum(inch, 0)} inch`;
-  if (isNum(cm)) return `${fmtNum(cm, 0)} cm`;
-  return "-";
-}
-function getWeightText(p) {
-  const gsm = isNum(p?.gsm) ? fmtNum(p.gsm, 0) : "";
-  const oz = isNum(p?.ozs) ? fmtNum(p.ozs, 1) : "";
-  if (gsm && oz) return `${gsm} gsm / ${oz} oz`;
-  if (gsm) return `${gsm} gsm`;
-  if (oz) return `${oz} oz`;
-  return "-";
-}
 function toUpperLabel(s) {
-  const t = String(s || "").trim();
+  const t = cleanStr(s);
   return t ? t.toUpperCase() : "";
 }
 function toKebabLower(s) {
-  return String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-");
+  return cleanStr(s).toLowerCase().replace(/\s+/g, "-").replace(/-+/g, "-");
 }
 function pdfWrap(doc, text, maxW) {
-  const t = String(text || "").trim();
+  const t = cleanStr(text);
   if (!t) return [];
   return doc.splitTextToSize(t, maxW);
 }
-async function toDataUrl(url) {
-  const res = await fetch(url, { mode: "cors" });
-  if (!res.ok) throw new Error("Image fetch failed");
-  const blob = await res.blob();
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(blob);
-  });
+
+/* ✅ NEW: hyphen -> space (for supplyModel) */
+function hyphenToSpace(v) {
+  return cleanStr(v).replace(/-/g, " ").replace(/\s{2,}/g, " ").trim();
 }
 
-/* ---- get dataUrl intrinsic size (for perfect logo aspect) ---- */
-async function getDataUrlSize(dataUrl) {
-  const src = String(dataUrl || "");
-  if (!src.startsWith("data:image/")) return null;
-  return await new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () =>
-      resolve({
-        w: img.naturalWidth || img.width || 0,
-        h: img.naturalHeight || img.height || 0,
-      });
-    img.onerror = () => resolve(null);
-    img.src = src;
-  });
+/* ✅ NEW: finish label rule:
+   - "aaa-bbb" => "bbb"
+   - if '=' exists, take RHS as safest (covers "aaa-bbb=bbb") */
+function finishLabel(v) {
+  const t = cleanStr(v);
+  if (!t) return "";
+  if (t.includes("=")) return cleanStr(t.split("=").pop());
+  if (t.includes("-")) return cleanStr(t.split("-").pop());
+  return t;
 }
-function fitIntoBox(srcW, srcH, boxW, boxH) {
-  if (!srcW || !srcH) return { w: boxW, h: boxH, scale: 1 };
-  const s = Math.min(boxW / srcW, boxH / srcH);
-  return { w: srcW * s, h: srcH * s, scale: s };
-}
-
-function fillR(doc, x, y, w, h, rgb, r = 0) {
-  doc.setFillColor(rgb[0], rgb[1], rgb[2]);
-  if (r > 0) doc.roundedRect(x, y, w, h, r, r, "F");
-  else doc.rect(x, y, w, h, "F");
-}
-function strokeR(doc, x, y, w, h, rgb, r = 0, lw = 0.2) {
-  doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
-  doc.setLineWidth(lw);
-  if (r > 0) doc.roundedRect(x, y, w, h, r, r, "S");
-  else doc.rect(x, y, w, h, "S");
-}
-function pill(
-  doc,
-  x,
-  y,
-  text,
-  { bg, fg, padX = 4.2, h = 7.2, r = 3.6, fontSize = 7.2, bold = true } = {}
-) {
-  const t = String(text || "").trim();
-  if (!t) return { w: 0 };
-  doc.setFont("helvetica", bold ? "bold" : "normal");
-  doc.setFontSize(fontSize);
-  const w = doc.getTextWidth(t) + padX * 2;
-  fillR(doc, x, y, w, h, bg, r);
-  doc.setTextColor(fg[0], fg[1], fg[2]);
-  doc.text(t, x + padX, y + h * 0.68);
-  return { w };
+function joinFinish(val, sep = ", ") {
+  if (Array.isArray(val)) return val.map(finishLabel).filter(Boolean).join(sep);
+  return finishLabel(val);
 }
 
 /* -------- fit text to single line (prevents wrap/merge) -------- */
 function fitOneLine(doc, text, maxW) {
-  const t0 = String(text || "").trim();
+  const t0 = cleanStr(text);
   if (!t0) return "";
   if (doc.getTextWidth(t0) <= maxW) return t0;
 
@@ -204,31 +92,112 @@ function fitOneLine(doc, text, maxW) {
   return (best || "").trimEnd() + ell;
 }
 
+/* ------------------------------ images ------------------------------ */
+function getPrimaryImage(p) {
+  // still only DB fields; no SVG/placeholder fallback
+  const candidates = [
+    p?.image1CloudUrl,
+    p?.image1ThumbUrl,
+    p?.image2CloudUrl,
+    p?.image2ThumbUrl,
+    p?.image3CloudUrl,
+    p?.image3ThumbUrl,
+  ]
+    .map(cleanStr)
+    .filter(Boolean);
+
+  return candidates[0] || "";
+}
+async function toDataUrl(url) {
+  const u = cleanStr(url);
+  if (!u) return null;
+  const res = await fetch(u, { mode: "cors" });
+  if (!res.ok) throw new Error("Image fetch failed");
+  const blob = await res.blob();
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/* ---- get dataUrl intrinsic size (for perfect logo aspect) ---- */
+async function getDataUrlSize(dataUrl) {
+  const src = cleanStr(dataUrl);
+  if (!src.startsWith("data:image/")) return null;
+  return await new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () =>
+      resolve({
+        w: img.naturalWidth || img.width || 0,
+        h: img.naturalHeight || img.height || 0,
+      });
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+function fitIntoBox(srcW, srcH, boxW, boxH) {
+  if (!srcW || !srcH) return { w: boxW, h: boxH, scale: 1 };
+  const s = Math.min(boxW / srcW, boxH / srcH);
+  return { w: srcW * s, h: srcH * s, scale: s };
+}
+
+/* ------------------------------ shapes ------------------------------ */
+function fillR(doc, x, y, w, h, rgb, r = 0) {
+  doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  if (r > 0) doc.roundedRect(x, y, w, h, r, r, "F");
+  else doc.rect(x, y, w, h, "F");
+}
+function strokeR(doc, x, y, w, h, rgb, r = 0, lw = 0.2) {
+  doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+  doc.setLineWidth(lw);
+  if (r > 0) doc.roundedRect(x, y, w, h, r, r, "S");
+  else doc.rect(x, y, w, h, "S");
+}
+function pill(
+  doc,
+  x,
+  y,
+  text,
+  { bg, fg, padX = 4.2, h = 7.2, r = 3.6, fontSize = 7.2, bold = true } = {},
+) {
+  const t = cleanStr(text);
+  if (!t) return { w: 0 };
+  doc.setFont("helvetica", bold ? "bold" : "normal");
+  doc.setFontSize(fontSize);
+  const w = doc.getTextWidth(t) + padX * 2;
+  fillR(doc, x, y, w, h, bg, r);
+  doc.setTextColor(fg[0], fg[1], fg[2]);
+  doc.text(t, x + padX, y + h * 0.68);
+  return { w };
+}
+
 /* ------------------------------ link helpers ------------------------------ */
 function normalizeTel(s) {
-  return String(s || "").replace(/[^\d+]/g, "").trim();
+  return cleanStr(s).replace(/[^\d+]/g, "").trim();
 }
 function normalizeWaDigits(s) {
-  return String(s || "").replace(/[^\d]/g, "").trim(); // no +
+  return cleanStr(s).replace(/[^\d]/g, "").trim(); // no +
 }
 function normalizeUrl(u) {
-  const s = String(u || "").trim();
+  const s = cleanStr(u);
   if (!s) return "";
   if (/^https?:\/\//i.test(s)) return s;
   if (s.startsWith("//")) return "https:" + s;
   return "https://" + s;
 }
 function normalizeEmail(s) {
-  return String(s || "").trim();
+  return cleanStr(s);
 }
 function looksLikeEmail(s) {
-  const t = String(s || "").trim();
+  const t = cleanStr(s);
   return !!t && /@/.test(t);
 }
 
-/* ------------------------------ QR helper (dynamic per productUrl) ------------------------------ */
+/* ------------------------------ QR helper ------------------------------ */
 async function makeQrDataUrl(data) {
-  const d = String(data || "").trim();
+  const d = cleanStr(data);
   if (!d) return null;
   try {
     return await QRCode.toDataURL(d, {
@@ -245,12 +214,10 @@ async function makeQrDataUrl(data) {
 /* ------------------------------ Stars (NO BORDER / correct partial) ------------------------------ */
 function normalizeRatingTo5(val) {
   const n = Number(val);
-  if (!Number.isFinite(n)) return 0;
-
-  if (n <= 5) return Math.max(0, Math.min(5, n)); // already 0..5
-  if (n <= 10) return Math.max(0, Math.min(5, n / 2)); // 0..10 -> 0..5
-  if (n <= 100) return Math.max(0, Math.min(5, (n * 5) / 100)); // 0..100% -> 0..5
-
+  if (!Number.isFinite(n)) return null; // IMPORTANT: no fallback rating
+  if (n <= 5) return Math.max(0, Math.min(5, n));
+  if (n <= 10) return Math.max(0, Math.min(5, n / 2));
+  if (n <= 100) return Math.max(0, Math.min(5, (n * 5) / 100));
   return 5;
 }
 function buildStarPoints(cx, cy, size) {
@@ -275,7 +242,15 @@ function fillStar(doc, pts, rgb) {
   starPath(doc, pts);
   doc.fill();
 }
-function drawStarNoStroke(doc, cx, cy, size, fillPercent, goldColor, emptyColor) {
+function drawStarNoStroke(
+  doc,
+  cx,
+  cy,
+  size,
+  fillPercent,
+  goldColor,
+  emptyColor,
+) {
   const { pts, outer } = buildStarPoints(cx, cy, size);
   const fill = Math.max(0, Math.min(1, Number(fillPercent) || 0));
 
@@ -304,12 +279,13 @@ function drawStarNoStroke(doc, cx, cy, size, fillPercent, goldColor, emptyColor)
 
     doc.restoreGraphicsState();
   } catch {
-    // fallback snap
     if (fill >= 0.5) fillStar(doc, pts, goldColor);
   }
 }
 function drawStars(doc, x, yCenter, ratingValue, opts = {}) {
   const r = normalizeRatingTo5(ratingValue);
+  if (r === null) return; // IMPORTANT: if DB has no rating, show nothing
+
   const size = Number(opts.size ?? 3.0);
   const gap = Number(opts.gap ?? 0.5);
 
@@ -325,24 +301,35 @@ function drawStars(doc, x, yCenter, ratingValue, opts = {}) {
     if (r >= starEnd) fillPercent = 1;
     else if (r > starStart) fillPercent = r - starStart;
 
-    drawStarNoStroke(doc, cx, yCenter, size, fillPercent, goldColor, emptyColor);
+    drawStarNoStroke(
+      doc,
+      cx,
+      yCenter,
+      size,
+      fillPercent,
+      goldColor,
+      emptyColor,
+    );
     cx += size + gap;
   }
 }
 
-/* ------------------------------ Suitability (FULLY DYNAMIC) ------------------------------ */
+/* ------------------------------ Suitability (dynamic, NO "-" placeholders) ------------------------------ */
 function normalizeSuitabilityText(s) {
-  return String(s || "")
+  return cleanStr(s)
     .replace(/\b\d{1,3}\s*%\b/g, "")
     .replace(/\s*\/\s*/g, " / ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
 function parseSuitabilityItem(line) {
-  const raw = String(line || "").trim();
+  const raw = cleanStr(line);
   if (!raw) return null;
 
-  const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
+  const parts = raw
+    .split("|")
+    .map((x) => cleanStr(x))
+    .filter(Boolean);
   if (parts.length < 2) return null;
 
   const seg = normalizeSuitabilityText(parts[0]);
@@ -352,17 +339,18 @@ function parseSuitabilityItem(line) {
   const usePart = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : parts[1];
   const use = normalizeSuitabilityText(usePart);
 
-  if (!seg) return null;
-  return { seg, use: use || "-", pct: Number.isFinite(pct) ? pct : null };
+  if (!seg || !use) return null;
+  return { seg, use, pct: Number.isFinite(pct) ? pct : null };
 }
 function joinNice(arr) {
-  const a = (arr || []).filter(Boolean);
-  if (a.length <= 1) return a[0] || "-";
+  const a = (arr || []).map(cleanStr).filter(Boolean);
+  if (!a.length) return "";
+  if (a.length === 1) return a[0];
   if (a.length === 2) return `${a[0]} and ${a[1]}`;
   return `${a.slice(0, -1).join(", ")}, and ${a[a.length - 1]}`;
 }
 function isHomeOrAccessory(seg) {
-  const s = String(seg || "").toLowerCase();
+  const s = cleanStr(seg).toLowerCase();
   return (
     s.includes("home") ||
     s.includes("accessor") ||
@@ -372,15 +360,17 @@ function isHomeOrAccessory(seg) {
     s.includes("work")
   );
 }
-function buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg = 3, showPercent = false } = {}) {
+function buildSuitabilityBulletsDynamic(
+  p,
+  { maxUsesPerSeg = 3, showPercent = false } = {},
+) {
   const items = (p?.suitability || []).map(parseSuitabilityItem).filter(Boolean);
 
-  // seg -> use -> best pct
-  const map = new Map();
+  const map = new Map(); // seg -> use -> best pct
   for (const it of items) {
     if (!map.has(it.seg)) map.set(it.seg, new Map());
     const useMap = map.get(it.seg);
-    const key = it.use || "-";
+    const key = it.use;
     const prev = useMap.get(key);
     const prevPct = prev?.pct ?? -1;
     const nextPct = it.pct ?? -1;
@@ -390,17 +380,20 @@ function buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg = 3, showPercent = fa
   const groups = [];
   for (const [seg, useMap] of map.entries()) {
     const uses = Array.from(useMap.values())
-      .filter((u) => u.use && u.use !== "-")
+      .filter((u) => cleanStr(u.use))
       .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
       .slice(0, maxUsesPerSeg);
 
     const labels = uses.map((u) =>
-      showPercent && u.pct != null ? `${u.use} (${fmtNum(u.pct, 0)}%)` : u.use
+      showPercent && u.pct != null ? `${u.use} (${fmtNum(u.pct, 0)}%)` : u.use,
     );
+
+    const sentence = joinNice(labels);
+    if (!sentence) continue;
 
     groups.push({
       label: seg,
-      text: labels.length ? `${joinNice(labels)}.` : "-",
+      text: `${sentence}.`,
       _home: isHomeOrAccessory(seg),
       _score: uses[0]?.pct ?? 0,
     });
@@ -408,8 +401,12 @@ function buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg = 3, showPercent = fa
 
   groups.sort((a, b) => (b._score ?? 0) - (a._score ?? 0));
 
-  const apparel = groups.filter((g) => !g._home).map(({ label, text }) => ({ label, text }));
-  const homeAcc = groups.filter((g) => g._home).map(({ label, text }) => ({ label, text }));
+  const apparel = groups
+    .filter((g) => !g._home)
+    .map(({ label, text }) => ({ label, text }));
+  const homeAcc = groups
+    .filter((g) => g._home)
+    .map(({ label, text }) => ({ label, text }));
 
   return { apparel, homeAcc };
 }
@@ -422,13 +419,13 @@ function footerCircle(doc, cx, cy, r, fill) {
 function setIconStroke(doc, w = 0.95) {
   doc.setDrawColor(255, 255, 255);
   doc.setLineWidth(w);
-  if (typeof doc.setLineCap === "function") doc.setLineCap(1); // round
+  if (typeof doc.setLineCap === "function") doc.setLineCap(1);
   if (typeof doc.setLineJoin === "function") doc.setLineJoin(1);
 }
 function drawPhoneIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.95);
   const a = r * 0.62;
-  const b = r * 0.30;
+  const b = r * 0.3;
 
   doc.line(cx - a, cy - b, cx - r * 0.15, cy - r * 0.62);
   doc.line(cx - r * 0.15, cy - r * 0.62, cx + a * 0.75, cy - b * 0.35);
@@ -436,19 +433,19 @@ function drawPhoneIcon(doc, cx, cy, r) {
   doc.line(cx - a * 0.75, cy + b * 0.35, cx + r * 0.15, cy + r * 0.62);
   doc.line(cx + r * 0.15, cy + r * 0.62, cx + a, cy + b);
 
-  doc.line(cx - r * 0.10, cy - r * 0.05, cx + r * 0.10, cy + r * 0.05);
+  doc.line(cx - r * 0.1, cy - r * 0.05, cx + r * 0.1, cy + r * 0.05);
 }
 function drawWhatsappIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.85);
 
-  doc.circle(cx, cy - 0.15, r * 0.70, "S");
+  doc.circle(cx, cy - 0.15, r * 0.7, "S");
 
   doc.line(cx - r * 0.22, cy + r * 0.45, cx - r * 0.52, cy + r * 0.78);
-  doc.line(cx - r * 0.52, cy + r * 0.78, cx - r * 0.10, cy + r * 0.62);
+  doc.line(cx - r * 0.52, cy + r * 0.78, cx - r * 0.1, cy + r * 0.62);
 
   doc.setLineWidth(0.85);
-  doc.line(cx - r * 0.24, cy - r * 0.02, cx - r * 0.04, cy - r * 0.20);
-  doc.line(cx - r * 0.04, cy - r * 0.20, cx + r * 0.20, cy - r * 0.02);
+  doc.line(cx - r * 0.24, cy - r * 0.02, cx - r * 0.04, cy - r * 0.2);
+  doc.line(cx - r * 0.04, cy - r * 0.2, cx + r * 0.2, cy - r * 0.02);
   doc.line(cx - r * 0.18, cy + r * 0.06, cx - r * 0.02, cy + r * 0.22);
   doc.line(cx - r * 0.02, cy + r * 0.22, cx + r * 0.22, cy + r * 0.06);
 }
@@ -467,64 +464,63 @@ function drawMailIcon(doc, cx, cy, r) {
   doc.line(x, y + h, x + w, y + h);
 }
 
-/* ------------------------------ Company Information (dynamic) ------------------------------ */
+/* ------------------------------ Company Information (dynamic, NO DEFAULT FALLBACKS) ------------------------------ */
 const _ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
-const DEFAULT_COMPANY_INFO_URL = String(_ENV.VITE_COMPANY_INFORMATION || "").replace(/\/$/, "");
-const DEFAULT_ESPO_API_KEY = String(_ENV.VITE_X_API_KEY || "");
-const DEFAULT_COMPANY_PREFER_NAME = String(_ENV.VITE_COMPANY_PREFER_NAME || "AGE");
-const DEFAULT_COMPANY_INFO_ID = String(_ENV.VITE_COMPANY_INFORMATION_ID || "");
+const DEFAULT_COMPANY_INFO_URL = cleanStr(_ENV.VITE_COMPANY_INFORMATION).replace(
+  /\/$/,
+  "",
+);
+const DEFAULT_ESPO_API_KEY = cleanStr(_ENV.VITE_X_API_KEY);
+const DEFAULT_COMPANY_INFO_ID = cleanStr(_ENV.VITE_COMPANY_INFORMATION_ID);
 
 let _companyInfoCache = null;
 let _companyInfoPromise = null;
 
 function buildAddressLineFromCompany(ci) {
-  const street = String(ci?.addressStreet || "").trim();
-  const city = String(ci?.addressCity || "").trim();
-  const state = String(ci?.addressState || "").trim();
-  const country = String(ci?.addressCountry || "").trim();
-  const pin = String(ci?.addressPostalCode || "").trim();
+  const street = cleanStr(ci?.addressStreet);
+  const city = cleanStr(ci?.addressCity);
+  const state = cleanStr(ci?.addressState);
+  const country = cleanStr(ci?.addressCountry);
+  const pin = cleanStr(ci?.addressPostalCode);
 
   const parts = [street, city, state, country].filter(Boolean);
   const base = parts.join(", ");
   if (!base && pin) return pin;
   if (base && pin) return `${base} ${pin}`;
-  return base || "";
+  return base;
 }
 
-function pickCompanyRecord(list, { preferId, preferName } = {}) {
+function pickCompanyRecord(list, { preferId } = {}) {
   const arr = Array.isArray(list) ? list.filter((x) => !x?.deleted) : [];
   if (!arr.length) return null;
 
-  const byId = preferId ? arr.find((x) => String(x?.id || "") === String(preferId)) : null;
+  const byId = preferId
+    ? arr.find((x) => cleanStr(x?.id) === cleanStr(preferId))
+    : null;
   if (byId) return byId;
 
-  const pn = String(preferName || "").trim().toLowerCase();
-  if (pn) {
-    const byName = arr.find((x) => String(x?.name || "").trim().toLowerCase() === pn);
-    if (byName) return byName;
-  }
-
-  const byAGE = arr.find((x) => String(x?.name || "").trim().toLowerCase() === "age");
-  if (byAGE) return byAGE;
-
-  const sorted = [...arr].sort((a, b) => Number(b?.versionNumber || 0) - Number(a?.versionNumber || 0));
-  return sorted[0] || arr[0] || null;
+  // latest versionNumber if exists
+  const sorted = [...arr].sort(
+    (a, b) => Number(b?.versionNumber || 0) - Number(a?.versionNumber || 0),
+  );
+  return sorted[0] || null;
 }
 
 async function fetchCompanyInformation({
   url = DEFAULT_COMPANY_INFO_URL,
   apiKey = DEFAULT_ESPO_API_KEY,
   preferId = DEFAULT_COMPANY_INFO_ID,
-  preferName = DEFAULT_COMPANY_PREFER_NAME,
 } = {}) {
-  const base = String(url || "").trim();
+  const base = cleanStr(url);
   if (!base) return null;
 
   try {
     const u = new URL(base);
     if (!u.searchParams.has("maxSize")) u.searchParams.set("maxSize", "200");
-    if (!u.searchParams.has("sortBy")) u.searchParams.set("sortBy", "versionNumber");
-    if (!u.searchParams.has("sortDirection")) u.searchParams.set("sortDirection", "DESC");
+    if (!u.searchParams.has("sortBy"))
+      u.searchParams.set("sortBy", "versionNumber");
+    if (!u.searchParams.has("sortDirection"))
+      u.searchParams.set("sortDirection", "DESC");
 
     const headers = {};
     if (apiKey) {
@@ -536,7 +532,7 @@ async function fetchCompanyInformation({
     if (!res.ok) return null;
 
     const data = await res.json();
-    return pickCompanyRecord(data?.list, { preferId, preferName }) || null;
+    return pickCompanyRecord(data?.list, { preferId }) || null;
   } catch {
     return null;
   }
@@ -556,6 +552,25 @@ async function getCompanyInformationCached(opts = {}) {
   return _companyInfoPromise;
 }
 
+/* ------------------------------ width/weight (NO "-" placeholders) ------------------------------ */
+function getWidthText(p) {
+  const cm = p?.cm;
+  const inch = p?.inch;
+  if (isNum(cm) && isNum(inch))
+    return `${fmtNum(cm, 0)} cm / ${fmtNum(inch, 0)} inch`;
+  if (isNum(inch)) return `${fmtNum(inch, 0)} inch`;
+  if (isNum(cm)) return `${fmtNum(cm, 0)} cm`;
+  return "";
+}
+function getWeightText(p) {
+  const gsm = isNum(p?.gsm) ? fmtNum(p.gsm, 0) : "";
+  const oz = isNum(p?.ozs) ? fmtNum(p.ozs, 1) : "";
+  if (gsm && oz) return `${gsm} gsm / ${oz} oz`;
+  if (gsm) return `${gsm} gsm`;
+  if (oz) return `${oz} oz`;
+  return "";
+}
+
 /* ------------------------------ main export ------------------------------ */
 export async function downloadProductPdf(
   p,
@@ -564,38 +579,38 @@ export async function downloadProductPdf(
     qrDataUrl,
     logoPath = "/logo1.png",
 
-    // dynamic by default (from VITE_COMPANY_INFORMATION)
     companyInfoUrl = DEFAULT_COMPANY_INFO_URL,
     companyInfoId = DEFAULT_COMPANY_INFO_ID,
-    companyInfoPreferName = DEFAULT_COMPANY_PREFER_NAME,
     espoApiKey = DEFAULT_ESPO_API_KEY,
 
     // optional manual overrides (if passed, they win)
     companyName,
     phone1,
     phone2, // whatsappNumber
-    email,  // primaryEmail
-    website, // optional
+    email, // primaryEmail
     addressLine,
 
+    // IMPORTANT: use only DB field p.optionsCount unless explicitly passed
     optionsCount,
-  } = {}
+  } = {},
 ) {
   // company info once (cached)
   const ci = await getCompanyInformationCached({
     url: companyInfoUrl,
     apiKey: espoApiKey,
     preferId: companyInfoId,
-    preferName: companyInfoPreferName,
   });
 
-  // map company fields
-  const dynamicCompanyName = firstNonEmpty(companyName, ci?.legalName, ci?.name, "");
-  const dynamicPhone1 = firstNonEmpty(phone1, ci?.phone1, "");
-  const dynamicPhone2 = firstNonEmpty(phone2, ci?.whatsappNumber, "");
-  const dynamicEmail = firstNonEmpty(email, ci?.primaryEmail, "");
-  const dynamicAddress = firstNonEmpty(addressLine, buildAddressLineFromCompany(ci), ci?.addressStreet, "");
-  const dynamicWebsite = firstNonEmpty(website, "");
+  // dynamic fields (NO hardcoded fallback strings)
+  const dynamicCompanyName =
+    cleanStr(companyName) || cleanStr(ci?.legalName) || cleanStr(ci?.name);
+  const dynamicPhone1 = cleanStr(phone1) || cleanStr(ci?.phone1);
+  const dynamicPhone2 = cleanStr(phone2) || cleanStr(ci?.whatsappNumber);
+  const dynamicEmail = cleanStr(email) || cleanStr(ci?.primaryEmail);
+  const dynamicAddress =
+    cleanStr(addressLine) ||
+    buildAddressLineFromCompany(ci) ||
+    cleanStr(ci?.addressStreet);
 
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -615,39 +630,56 @@ export async function downloadProductPdf(
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageW, pageH, "F");
 
-  const code = getDisplayCode(p);
-  const title = firstNonEmpty(p?.productTitle, p?.name, code);
-  const tagline = firstNonEmpty(p?.productTagline, "");
-  const shortDesc = firstNonEmpty(
-    p?.shortProductDescription,
-    p?.productTagline,
-    p?.description ? stripHtml(p.description).slice(0, 180) : "",
-    ""
-  );
+  // IMPORTANT: use exact DB fields (no fallback to other fields)
+  const code = cleanStr(p?.fabricCode);
+  const title = cleanStr(p?.productTitle);
+  const tagline = cleanStr(p?.productTagline);
+  const shortDesc = cleanStr(p?.shortProductDescription);
 
-  const categoryPill = toUpperLabel(firstNonEmpty(p?.category, "Woven Fabrics"));
-  const supplyPill = toKebabLower(firstNonEmpty(p?.supplyModel, "never-out-of-stock"));
+  const categoryPill = toUpperLabel(p?.category);
 
-  // IMPORTANT: rating can be 0..5, 0..10 or 0..100 (normalized in drawStars)
-  const ratingValue = firstNonEmpty(p?.ratingValue, p?.rating, p?.ratingPercent, 0);
+  // ✅ CHANGE #1: supplyModel show without hyphens
+  const supplyPill = hyphenToSpace(p?.supplyModel);
 
-  const autoOptions =
-    Number.isFinite(Number(p?.optionsCount)) ? Number(p.optionsCount) :
-    Array.isArray(p?.options) ? p.options.length :
-    Array.isArray(p?.variants) ? p.variants.length :
-    undefined;
-  const optCount = Number.isFinite(Number(optionsCount)) ? Number(optionsCount) : autoOptions;
+  // rating: show only if DB has a value (no default 0)
+  const rawRating =
+    p?.ratingValue !== undefined &&
+    p?.ratingValue !== null &&
+    cleanStr(p?.ratingValue) !== ""
+      ? p?.ratingValue
+      : p?.rating !== undefined && p?.rating !== null && cleanStr(p?.rating) !== ""
+        ? p?.rating
+        : p?.ratingPercent !== undefined &&
+            p?.ratingPercent !== null &&
+            cleanStr(p?.ratingPercent) !== ""
+          ? p?.ratingPercent
+          : null;
+
+  // options: ONLY p.optionsCount (or explicit optionsCount param)
+  const optCount = Number.isFinite(Number(optionsCount))
+    ? Number(optionsCount)
+    : Number.isFinite(Number(p?.optionsCount))
+      ? Number(p.optionsCount)
+      : null;
 
   // links
   const productLink = productUrl ? normalizeUrl(productUrl) : "";
 
-  // images
-  const imgUrl = getPrimaryImage(p) || fallbackImageSvg(code);
+  // images (NO placeholder image)
+  const imgUrl = getPrimaryImage(p);
   let imgDataUrl = null;
-  try { imgDataUrl = imgUrl ? await toDataUrl(imgUrl) : null; } catch { imgDataUrl = null; }
+  try {
+    imgDataUrl = imgUrl ? await toDataUrl(imgUrl) : null;
+  } catch {
+    imgDataUrl = null;
+  }
 
   let logoDataUrl = null;
-  try { logoDataUrl = await toDataUrl(logoPath); } catch { logoDataUrl = null; }
+  try {
+    logoDataUrl = await toDataUrl(logoPath);
+  } catch {
+    logoDataUrl = null;
+  }
 
   const logoSize = logoDataUrl ? await getDataUrlSize(logoDataUrl) : null;
 
@@ -663,11 +695,11 @@ export async function downloadProductPdf(
   const logoBoxH = 14.5;
   const gap = 5;
 
-  const headerCompanyName = firstNonEmpty(dynamicCompanyName, "");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(23);
   doc.setTextColor(0, 0, 0);
 
+  const headerCompanyName = cleanStr(dynamicCompanyName);
   const nameW = doc.getTextWidth(headerCompanyName || " ");
   const totalW = logoBoxW + gap + nameW;
   const startX = Math.max(10, (pageW - totalW) / 2);
@@ -678,7 +710,8 @@ export async function downloadProductPdf(
   if (logoDataUrl) {
     const isPng = String(logoDataUrl).startsWith("data:image/png");
     const isJpeg =
-      String(logoDataUrl).startsWith("data:image/jpeg") || String(logoDataUrl).startsWith("data:image/jpg");
+      String(logoDataUrl).startsWith("data:image/jpeg") ||
+      String(logoDataUrl).startsWith("data:image/jpg");
     const fmt = isPng ? "PNG" : isJpeg ? "JPEG" : "PNG";
 
     const srcW = logoSize?.w || 0;
@@ -690,10 +723,13 @@ export async function downloadProductPdf(
     const dx = logoX + (logoBoxW - drawW) / 2;
     const dy = logoY + (logoBoxH - drawH) / 2;
 
-    try { doc.addImage(logoDataUrl, fmt, dx, dy, drawW, drawH); } catch {}
+    try {
+      doc.addImage(logoDataUrl, fmt, dx, dy, drawW, drawH);
+    } catch {}
   }
 
-  if (headerCompanyName) doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
+  if (headerCompanyName)
+    doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
 
   const lineY = headerTop + 17.2;
   doc.setDrawColor(GOLD_LINE[0], GOLD_LINE[1], GOLD_LINE[2]);
@@ -713,15 +749,18 @@ export async function downloadProductPdf(
 
   const codeX = M + 2.5;
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12.6);
-  doc.setTextColor(0, 0, 0);
-  doc.text(String(code), codeX, heroTop + 7.2);
+  // code (draw only if exists)
+  if (code) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12.6);
+    doc.setTextColor(0, 0, 0);
+    doc.text(String(code), codeX, heroTop + 7.2);
 
-  const codeW = doc.getTextWidth(String(code));
-  doc.setDrawColor(GOLD_LINE_DARK[0], GOLD_LINE_DARK[1], GOLD_LINE_DARK[2]);
-  doc.setLineWidth(0.4);
-  doc.line(codeX, heroTop + 8.9, codeX + Math.min(codeW, 34), heroTop + 8.9);
+    const codeW = doc.getTextWidth(String(code));
+    doc.setDrawColor(GOLD_LINE_DARK[0], GOLD_LINE_DARK[1], GOLD_LINE_DARK[2]);
+    doc.setLineWidth(0.4);
+    doc.line(codeX, heroTop + 8.9, codeX + Math.min(codeW, 34), heroTop + 8.9);
+  }
 
   // image card
   const imgX = M;
@@ -733,16 +772,21 @@ export async function downloadProductPdf(
   fillR(doc, imgX, imgY, imgW, imgH, [255, 255, 255], 2.8);
   strokeR(doc, imgX, imgY, imgW, imgH, BORDER, 2.8, 0.25);
 
+  // image (only if DB has URL)
   if (imgDataUrl && typeof imgDataUrl === "string") {
     const isPng = imgDataUrl.startsWith("data:image/png");
-    const isJpeg = imgDataUrl.startsWith("data:image/jpeg") || imgDataUrl.startsWith("data:image/jpg");
+    const isJpeg =
+      imgDataUrl.startsWith("data:image/jpeg") ||
+      imgDataUrl.startsWith("data:image/jpg");
     const fmt = isPng ? "PNG" : isJpeg ? "JPEG" : null;
     if (fmt) {
-      try { doc.addImage(imgDataUrl, fmt, imgX + 2, imgY + 2, imgW - 4, imgH - 4); } catch {}
+      try {
+        doc.addImage(imgDataUrl, fmt, imgX + 2, imgY + 2, imgW - 4, imgH - 4);
+      } catch {}
     }
   }
 
-  // options badge
+  // options badge (only if optCount exists)
   if (Number.isFinite(optCount) && optCount > 0) {
     const badgeW = 34;
     const badgeH = 7.0;
@@ -770,33 +814,54 @@ export async function downloadProductPdf(
   const rightX = imgX + imgW + 12;
   const rightW = pageW - M - rightX;
 
-  // pills
+  // pills (draw only if DB has values)
   const pillsY = heroTop + 10;
   let px = rightX;
 
-  const p1 = pill(doc, px, pillsY, categoryPill || "WOVEN FABRICS", {
-    bg: PILL_BLUE, fg: [255, 255, 255], h: 7.2, r: 3.6, fontSize: 7.2, padX: 4.2, bold: true,
-  });
-  px += p1.w + 4;
+  if (categoryPill) {
+    const p1 = pill(doc, px, pillsY, categoryPill, {
+      bg: PILL_BLUE,
+      fg: [255, 255, 255],
+      h: 7.2,
+      r: 3.6,
+      fontSize: 7.2,
+      padX: 4.2,
+      bold: true,
+    });
+    px += p1.w + 4;
+  }
 
-  const p2 = pill(doc, px, pillsY, supplyPill || "never-out-of-stock", {
-    bg: PILL_TEAL, fg: [255, 255, 255], h: 7.2, r: 3.6, fontSize: 7.2, padX: 4.2, bold: true,
-  });
-  px += p2.w + 4;
+  if (supplyPill) {
+    const p2 = pill(doc, px, pillsY, supplyPill, {
+      bg: PILL_TEAL,
+      fg: [255, 255, 255],
+      h: 7.2,
+      r: 3.6,
+      fontSize: 7.2,
+      padX: 4.2,
+      bold: true,
+    });
+    px += p2.w + 4;
+  }
 
-  // rating pill (NO BORDER)
-  const ratingPillH = 7.2;
-  const ratingPillW = 44;
-  fillR(doc, px, pillsY, ratingPillW, ratingPillH, AMBER_BG, 3.6);
+  // rating pill (draw only if DB has rating)
+  if (rawRating !== null) {
+    const ratingPillH = 7.2;
+    const ratingPillW = 44;
+    fillR(doc, px, pillsY, ratingPillW, ratingPillH, AMBER_BG, 3.6);
 
-  const STAR_SIZE = 3.0;
-  const STAR_GAP = 0.5;
-  const starsW = 5 * STAR_SIZE + 4 * STAR_GAP;
-  const yCenter = pillsY + ratingPillH / 2 + 0.2;
+    const STAR_SIZE = 3.0;
+    const STAR_GAP = 0.5;
+    const starsW = 5 * STAR_SIZE + 4 * STAR_GAP;
+    const yCenter = pillsY + ratingPillH / 2 + 0.2;
 
-  drawStars(doc, px + (ratingPillW - starsW) / 2, yCenter, ratingValue, { size: STAR_SIZE, gap: STAR_GAP });
+    drawStars(doc, px + (ratingPillW - starsW) / 2, yCenter, rawRating, {
+      size: STAR_SIZE,
+      gap: STAR_GAP,
+    });
+  }
 
-  /* ---- Title + Tagline ---- */
+  /* ---- Title + Tagline (draw only if DB has text) ---- */
   const titleTopY = pillsY + 16.5;
   const textBottomY = imgY + imgH - 2.0;
 
@@ -809,41 +874,49 @@ export async function downloadProductPdf(
   let titleLines = [];
   let tagLines = [];
 
-  for (let tries = 0; tries < 6; tries++) {
+  if (title) {
+    for (let tries = 0; tries < 6; tries++) {
+      doc.setFont("times", "bold");
+      doc.setFontSize(titleSize);
+      titleLines = pdfWrap(doc, title, rightW).slice(0, 3);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(tagSize);
+      tagLines = pdfWrap(doc, tagline, rightW).slice(0, 2);
+
+      const titleH = titleLines.length * titleLH;
+      const tagH = tagLines.length * tagLH;
+      const avail = textBottomY - titleTopY;
+
+      if (
+        titleH + (tagLines.length ? minGap : 0) + tagH <= avail ||
+        titleSize <= 13.2
+      )
+        break;
+      titleSize -= 0.6;
+    }
+
     doc.setFont("times", "bold");
     doc.setFontSize(titleSize);
-    titleLines = pdfWrap(doc, title, rightW).slice(0, 3);
+    doc.setTextColor(0, 0, 0);
+    doc.text(titleLines, rightX, titleTopY);
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(tagSize);
-    tagLines = pdfWrap(doc, tagline, rightW).slice(0, 2);
+    const titleH2 = titleLines.length * titleLH;
 
-    const titleH = titleLines.length * titleLH;
-    const tagH = tagLines.length * tagLH;
-    const avail = textBottomY - titleTopY;
+    if (tagline) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(tagSize);
+      doc.setTextColor(0, 0, 0);
 
-    if (titleH + minGap + tagH <= avail || titleSize <= 13.2) break;
-    titleSize -= 0.6;
+      const tagH2 = tagLines.length * tagLH;
+      const avail2 = textBottomY - titleTopY;
+      const gap2 = Math.max(minGap, Math.min(14, avail2 - titleH2 - tagH2));
+      const tagY = titleTopY + titleH2 + gap2;
+      if (tagLines.length) doc.text(tagLines, rightX, tagY);
+    }
   }
 
-  doc.setFont("times", "bold");
-  doc.setFontSize(titleSize);
-  doc.setTextColor(0, 0, 0);
-  doc.text(titleLines, rightX, titleTopY);
-
-  const titleH2 = titleLines.length * titleLH;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(tagSize);
-  doc.setTextColor(0, 0, 0);
-
-  const tagH2 = tagLines.length * tagLH;
-  const avail2 = textBottomY - titleTopY;
-  const gap2 = Math.max(minGap, Math.min(14, avail2 - titleH2 - tagH2));
-  const tagY = titleTopY + titleH2 + gap2;
-  if (tagLines.length) doc.text(tagLines, rightX, tagY);
-
-  /* ---------------- paragraph under hero ---------------- */
+  /* ---------------- paragraph under hero (only if DB has text) ---------------- */
   const paraY = imgY + imgH + 10;
   if (shortDesc) {
     doc.setFont("helvetica", "normal");
@@ -854,7 +927,7 @@ export async function downloadProductPdf(
     doc.text(paraLines, M, paraY);
   }
 
-  /* ---------------- Specs table ---------------- */
+  /* ---------------- Specs table (NO "-" placeholders) ---------------- */
   const tableX = M;
   const tableY = paraY + (shortDesc ? 10 : 0);
   const tableW = pageW - M * 2;
@@ -871,16 +944,19 @@ export async function downloadProductPdf(
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.25);
   doc.line(tableX + cellW, tableY, tableX + cellW, tableY + rowH * 4);
-  for (let i = 1; i < 4; i++) doc.line(tableX, tableY + rowH * i, tableX + tableW, tableY + rowH * i);
+  for (let i = 1; i < 4; i++)
+    doc.line(tableX, tableY + rowH * i, tableX + tableW, tableY + rowH * i);
   doc.line(tableX, tableY + rowH * 4, tableX + tableW, tableY + rowH * 4);
 
   function drawCell(x, y0, w, label, value, { boldValue = false } = {}) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.2);
     doc.setTextColor(30, 64, 175);
-    doc.text(String(label || "").toUpperCase(), x + 8, y0 + 7.6);
+    doc.text(toUpperLabel(label), x + 8, y0 + 7.6);
 
-    const v = String(value ?? "-");
+    const v = cleanStr(value);
+    if (!v) return;
+
     doc.setFont("helvetica", boldValue ? "bold" : "normal");
     doc.setFontSize(9.2);
     doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
@@ -891,26 +967,34 @@ export async function downloadProductPdf(
     doc.text(line, cx, y0 + 7.6, { align: "center" });
   }
 
-  drawCell(tableX, tableY + rowH * 0, cellW, "Content", firstNonEmpty(getComposition(p), "-"));
+  drawCell(tableX, tableY + rowH * 0, cellW, "Content", joinArr(p?.content));
   drawCell(tableX + cellW, tableY + rowH * 0, cellW, "Width", getWidthText(p));
 
   drawCell(tableX, tableY + rowH * 1, cellW, "Weight", getWeightText(p));
-  drawCell(tableX + cellW, tableY + rowH * 1, cellW, "Design", firstNonEmpty(p?.design, "-"));
+  drawCell(tableX + cellW, tableY + rowH * 1, cellW, "Design", cleanStr(p?.design));
 
-  drawCell(tableX, tableY + rowH * 2, cellW, "Structure", firstNonEmpty(getStructure(p), "-"), { boldValue: true });
-  drawCell(tableX + cellW, tableY + rowH * 2, cellW, "Colors", firstNonEmpty(safeJoin(p?.color), "-"));
+  drawCell(
+    tableX,
+    tableY + rowH * 2,
+    cellW,
+    "Structure",
+    cleanStr(p?.structure),
+    { boldValue: true },
+  );
+  drawCell(tableX + cellW, tableY + rowH * 2, cellW, "Colors", joinArr(p?.color));
 
-  drawCell(tableX, tableY + rowH * 3, cellW, "Motif", firstNonEmpty(p?.motif, "-"));
+  drawCell(tableX, tableY + rowH * 3, cellW, "Motif", cleanStr(p?.motif));
 
+  // Sales MOQ (only if DB has salesMOQ)
   const moqVal = (() => {
-    const moq = isNum(p?.salesMOQ) ? fmtNum(p.salesMOQ, 0) : firstNonEmpty(p?.salesMOQ, "-");
-    const um = firstNonEmpty(p?.uM, "Meter");
-    if (!moq || moq === "-") return "-";
-    return `${moq} ${um}`;
+    const moq = isNum(p?.salesMOQ) ? fmtNum(p.salesMOQ, 0) : cleanStr(p?.salesMOQ);
+    if (!moq) return "";
+    const um = cleanStr(p?.uM);
+    return um ? `${moq} ${um}` : `${moq}`;
   })();
   drawCell(tableX + cellW, tableY + rowH * 3, cellW, "Sales MOQ", moqVal);
 
-  // finish full width
+  // finish full width (only if DB has finish)
   const finishY = tableY + rowH * 4;
   const finishLabelW = 24;
   const valueX = tableX + finishLabelW;
@@ -921,16 +1005,25 @@ export async function downloadProductPdf(
   doc.setTextColor(30, 64, 175);
   doc.text("FINISH", tableX + 8, finishY + 8.0);
 
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.8);
-  doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+  // ✅ CHANGE #2: finish values show only after hyphen
+  const finishText = joinFinish(p?.finish);
 
-  const finishText = firstNonEmpty(getFinish(p), "-");
-  const finishLines = pdfWrap(doc, finishText, valueW - 16).slice(0, 2);
-  doc.text(finishLines, valueX + valueW / 2, finishY + 8.0, { align: "center" });
+  if (finishText) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.8);
+    doc.setTextColor(TEXT[0], TEXT[1], TEXT[2]);
+     const padLeft = 6;            // ✅ start just next to FINISH
+  const maxTextW = valueW - 10; // ✅ keep inside cell
+  const finishLines = pdfWrap(doc, finishText, maxTextW).slice(0, 2);
+
+    doc.text(finishLines, valueX + padLeft, finishY + 8.0);
+  }
 
   /* ---------------- Suitability + QR ---------------- */
-  const suit = buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg: 3, showPercent: false });
+  const suit = buildSuitabilityBulletsDynamic(p, {
+    maxUsesPerSeg: 3,
+    showPercent: false,
+  });
 
   const showQr = !!finalQrDataUrl;
   const qrCardW = 34;
@@ -943,7 +1036,7 @@ export async function downloadProductPdf(
   const qrX = pageW - M - qrCardW;
   const qrY = Math.min(by - 2, contentMaxY - qrCardH);
 
-  const leftMaxW = showQr ? (qrX - M - qrGap) : (pageW - M * 2);
+  const leftMaxW = showQr ? qrX - M - qrGap : pageW - M * 2;
 
   if (showQr) {
     fillR(doc, qrX + 0.8, qrY + 0.8, qrCardW, qrCardH, [241, 245, 249], 2.8);
@@ -951,16 +1044,27 @@ export async function downloadProductPdf(
     strokeR(doc, qrX, qrY, qrCardW, qrCardH, BORDER, 2.8, 0.25);
 
     try {
-      doc.addImage(finalQrDataUrl, "PNG", qrX + (qrCardW - qrSize) / 2, qrY + 6, qrSize, qrSize);
+      doc.addImage(
+        finalQrDataUrl,
+        "PNG",
+        qrX + (qrCardW - qrSize) / 2,
+        qrY + 6,
+        qrSize,
+        qrSize,
+      );
     } catch {}
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.6);
     doc.setTextColor(30, 41, 59);
-    doc.text("Scan for details", qrX + qrCardW / 2, qrY + 6 + qrSize + 7.2, { align: "center" });
+    doc.text("Scan for details", qrX + qrCardW / 2, qrY + 6 + qrSize + 7.2, {
+      align: "center",
+    });
 
     if (productLink) {
-      try { doc.link(qrX, qrY, qrCardW, qrCardH, { url: productLink }); } catch {}
+      try {
+        doc.link(qrX, qrY, qrCardW, qrCardH, { url: productLink });
+      } catch {}
     }
   }
 
@@ -968,13 +1072,17 @@ export async function downloadProductPdf(
     const lineH = 6.2;
     if (y + lineH > contentMaxY) return { y, drawn: false };
 
+    const lblT = cleanStr(label);
+    const bodyT = cleanStr(text);
+    if (!lblT || !bodyT) return { y, drawn: false };
+
     doc.setFillColor(BULLET[0], BULLET[1], BULLET[2]);
     doc.circle(x + 2, y - 1.1, 0.7, "F");
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.8);
     doc.setTextColor(0, 0, 0);
-    const lbl = `${label}:`;
+    const lbl = `${lblT}:`;
     doc.text(lbl, x + 6, y);
 
     const lblW = doc.getTextWidth(lbl) + 1.6;
@@ -985,7 +1093,7 @@ export async function downloadProductPdf(
     doc.setTextColor(51, 65, 85);
 
     const bodyMax = Math.max(10, maxW - (bodyX - x));
-    const body = fitOneLine(doc, String(text || "-"), bodyMax) || String(text || "-");
+    const body = fitOneLine(doc, bodyT, bodyMax) || bodyT;
     doc.text(body, bodyX, y);
 
     return { y: y + lineH, drawn: true };
@@ -1020,40 +1128,61 @@ export async function downloadProductPdf(
     }
   }
 
-  /* ---------------- FOOTER (dynamic) ---------------- */
+  /* ---------------- FOOTER (dynamic, NO fallback merge) ---------------- */
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.35);
-  doc.line(M, footerLineY, pageW - M, footerLineY);
+  doc.line(M, pageH - 32, pageW - M, pageH - 32);
 
+  
   const footerY = footerLineY + 10;
   const iconR = 4.0;
 
-  const footerPhone1 = String(dynamicPhone1 || "").trim();
-  const footerPhone2 = String(dynamicPhone2 || "").trim(); // whatsapp
-  const footerEmail = String(dynamicEmail || "").trim();
-  const footerWebsite = String(dynamicWebsite || "").trim();
+  const footerPhone1 = cleanStr(dynamicPhone1);
+  const footerPhone2 = cleanStr(dynamicPhone2); // whatsapp
+  const footerEmail = cleanStr(dynamicEmail);
 
   const tel1 = normalizeTel(footerPhone1);
   const wa2 = normalizeWaDigits(footerPhone2);
 
-  const thirdText = footerEmail || footerWebsite;
-  const thirdUrl = looksLikeEmail(thirdText)
-    ? `mailto:${normalizeEmail(thirdText)}`
-    : (thirdText ? normalizeUrl(thirdText) : "");
-
   const footerItems = [
-    { text: footerPhone1, color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" },
-    { text: footerPhone2, color: [22, 163, 74], icon: "whatsapp", url: wa2 ? `https://wa.me/${wa2}` : "" },
-    { text: thirdText, color: [30, 64, 175], icon: "mail", url: thirdUrl },
-  ].filter((x) => x.text && x.text.trim());
+    footerPhone1
+      ? {
+          text: footerPhone1,
+          color: [194, 120, 62],
+          icon: "phone",
+          url: tel1 ? `tel:${tel1}` : "",
+        }
+      : null,
+    footerPhone2
+      ? {
+          text: footerPhone2,
+          color: [22, 163, 74],
+          icon: "whatsapp",
+          url: wa2 ? `https://wa.me/${wa2}` : "",
+        }
+      : null,
+    footerEmail
+      ? {
+          text: footerEmail,
+          color: [30, 64, 175],
+          icon: "mail",
+          url: looksLikeEmail(footerEmail)
+            ? `mailto:${normalizeEmail(footerEmail)}`
+            : "",
+        }
+      : null,
+  ].filter(Boolean);
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.setTextColor(30, 41, 59);
 
   const gapX = 10;
-  const widths = footerItems.map((it) => (iconR * 2 + 3) + doc.getTextWidth(it.text));
-  const total = widths.reduce((a, b) => a + b, 0) + gapX * (footerItems.length - 1);
+  const widths = footerItems.map(
+    (it) => iconR * 2 + 3 + doc.getTextWidth(it.text),
+  );
+  const total =
+    widths.reduce((a, b) => a + b, 0) + gapX * (footerItems.length - 1);
   let fx = Math.max(M, (pageW - total) / 2);
 
   for (let i = 0; i < footerItems.length; i++) {
@@ -1067,7 +1196,9 @@ export async function downloadProductPdf(
     const clickH = 10.5;
 
     if (it.url) {
-      try { doc.link(clickX, clickY, itemW, clickH, { url: it.url }); } catch {}
+      try {
+        doc.link(clickX, clickY, itemW, clickH, { url: it.url });
+      } catch {}
     }
 
     footerCircle(doc, cx, cy, iconR, it.color);
@@ -1083,17 +1214,23 @@ export async function downloadProductPdf(
     fx += itemW + gapX;
   }
 
+  // address (only if DB has address)
   if (dynamicAddress) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(100, 116, 139);
-    const addrLines = pdfWrap(doc, String(dynamicAddress), pageW - M * 2).slice(0, 2);
+    const addrLines = pdfWrap(doc, dynamicAddress, pageW - M * 2).slice(0, 2);
     doc.text(addrLines, pageW / 2, pageH - 10, { align: "center" });
   }
 
+  // full-page link only if productLink exists
   if (productLink) {
-    try { doc.link(M, 0, pageW - M * 2, pageH, { url: productLink }); } catch {}
+    try {
+      doc.link(M, 0, pageW - M * 2, pageH, { url: productLink });
+    } catch {}
   }
 
-  doc.save(`${code}.pdf`);
+  // filename: use fabricCode if present, else "product"
+  const fileName = code ? `${code}.pdf` : "product.pdf";
+  doc.save(fileName);
 }
