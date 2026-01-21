@@ -218,6 +218,13 @@ function normalizeUrl(u) {
   if (s.startsWith("//")) return "https:" + s;
   return "https://" + s;
 }
+function normalizeEmail(s) {
+  return String(s || "").trim();
+}
+function looksLikeEmail(s) {
+  const t = String(s || "").trim();
+  return !!t && /@/.test(t);
+}
 
 /* ------------------------------ QR helper (dynamic per productUrl) ------------------------------ */
 async function makeQrDataUrl(data) {
@@ -493,6 +500,99 @@ function drawMailIcon(doc, cx, cy, r) {
   doc.line(x, y + h, x + w, y + h);
 }
 
+/* ------------------------------ NEW: Company Information (dynamic) ------------------------------ */
+const _ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const DEFAULT_COMPANY_INFO_URL = String(_ENV.VITE_COMPANY_INFORMATION || "").replace(/\/$/, "");
+const DEFAULT_ESPO_API_KEY = String(_ENV.VITE_X_API_KEY || "");
+const DEFAULT_COMPANY_PREFER_NAME = String(_ENV.VITE_COMPANY_PREFER_NAME || "AGE");
+const DEFAULT_COMPANY_INFO_ID = String(_ENV.VITE_COMPANY_INFORMATION_ID || "");
+
+let _companyInfoCache = null;
+let _companyInfoPromise = null;
+
+function buildAddressLineFromCompany(ci) {
+  const street = String(ci?.addressStreet || "").trim();
+  const city = String(ci?.addressCity || "").trim();
+  const state = String(ci?.addressState || "").trim();
+  const country = String(ci?.addressCountry || "").trim();
+  const pin = String(ci?.addressPostalCode || "").trim();
+
+  const parts = [street, city, state, country].filter(Boolean);
+  const base = parts.join(", ");
+  if (!base && pin) return pin;
+  if (base && pin) return `${base} ${pin}`;
+  return base || "";
+}
+
+function pickCompanyRecord(list, { preferId, preferName } = {}) {
+  const arr = Array.isArray(list) ? list.filter((x) => !x?.deleted) : [];
+  if (!arr.length) return null;
+
+  const byId = preferId ? arr.find((x) => String(x?.id || "") === String(preferId)) : null;
+  if (byId) return byId;
+
+  const pn = String(preferName || "").trim().toLowerCase();
+  if (pn) {
+    const byName = arr.find((x) => String(x?.name || "").trim().toLowerCase() === pn);
+    if (byName) return byName;
+  }
+
+  const byAGE = arr.find((x) => String(x?.name || "").trim().toLowerCase() === "age");
+  if (byAGE) return byAGE;
+
+  // fallback: highest versionNumber
+  const sorted = [...arr].sort((a, b) => Number(b?.versionNumber || 0) - Number(a?.versionNumber || 0));
+  return sorted[0] || arr[0] || null;
+}
+
+async function fetchCompanyInformation({
+  url = DEFAULT_COMPANY_INFO_URL,
+  apiKey = DEFAULT_ESPO_API_KEY,
+  preferId = DEFAULT_COMPANY_INFO_ID,
+  preferName = DEFAULT_COMPANY_PREFER_NAME,
+} = {}) {
+  const base = String(url || "").trim();
+  if (!base) return null;
+
+  try {
+    const u = new URL(base);
+    // these are safe (Espo usually supports them). If ignored, no issue.
+    if (!u.searchParams.has("maxSize")) u.searchParams.set("maxSize", "200");
+    if (!u.searchParams.has("sortBy")) u.searchParams.set("sortBy", "versionNumber");
+    if (!u.searchParams.has("sortDirection")) u.searchParams.set("sortDirection", "DESC");
+
+    const headers = {};
+    if (apiKey) {
+      headers["X-Api-Key"] = apiKey;
+      // some setups also accept Bearer; harmless if ignored
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
+    const res = await fetch(u.toString(), { headers });
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const picked = pickCompanyRecord(data?.list, { preferId, preferName });
+    return picked || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getCompanyInformationCached(opts = {}) {
+  if (_companyInfoCache) return _companyInfoCache;
+  if (_companyInfoPromise) return _companyInfoPromise;
+
+  _companyInfoPromise = (async () => {
+    const ci = await fetchCompanyInformation(opts);
+    _companyInfoCache = ci || null;
+    _companyInfoPromise = null;
+    return _companyInfoCache;
+  })();
+
+  return _companyInfoPromise;
+}
+
 /* ------------------------------ main export ------------------------------ */
 export async function downloadProductPdf(
   p,
@@ -500,14 +600,40 @@ export async function downloadProductPdf(
     productUrl,
     qrDataUrl,
     logoPath = "/logo1.png",
-    companyName = "Amrita Global Enterprises",
-    phone1 = "+91-9011234321",
-    phone2 = "+91-8866791095",
-    website = "connect.age.com",
-    addressLine = "404, Safal Prelude, Near SPIPA, Corporate Road, Ahmedabad, Gujarat, India 380015",
+
+    // ✅ these are now dynamic by default (from VITE_COMPANY_INFORMATION)
+    companyInfoUrl = DEFAULT_COMPANY_INFO_URL,
+    companyInfoId = DEFAULT_COMPANY_INFO_ID,
+    companyInfoPreferName = DEFAULT_COMPANY_PREFER_NAME,
+    espoApiKey = DEFAULT_ESPO_API_KEY,
+
+    // optional manual overrides (if you pass them, they win)
+    companyName,
+    phone1,
+    phone2, // you asked: use whatsappNumber here
+    email,  // you asked: use primaryEmail here
+    website, // optional (if you still want website sometimes)
+    addressLine,
+
     optionsCount,
   } = {}
 ) {
+  // ✅ pull company info once (cached)
+  const ci = await getCompanyInformationCached({
+    url: companyInfoUrl,
+    apiKey: espoApiKey,
+    preferId: companyInfoId,
+    preferName: companyInfoPreferName,
+  });
+
+  // ✅ map fields exactly as you requested
+  const dynamicCompanyName = firstNonEmpty(companyName, ci?.legalName, ci?.name, ""); // legalName
+  const dynamicPhone1 = firstNonEmpty(phone1, ci?.phone1, ""); // phone1
+  const dynamicPhone2 = firstNonEmpty(phone2, ci?.whatsappNumber, ""); // whatsappNumber
+  const dynamicEmail = firstNonEmpty(email, ci?.primaryEmail, ""); // primaryEmail
+  const dynamicAddress = firstNonEmpty(addressLine, buildAddressLineFromCompany(ci), ci?.addressStreet, ""); // addressStreet (+ rest if present)
+  const dynamicWebsite = firstNonEmpty(website, ""); // keep optional if you want
+
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -571,16 +697,17 @@ export async function downloadProductPdf(
   /* ------------------------------ HEADER ------------------------------ */
   const headerTop = 6.5;
 
-  // ✅ CHANGE #1: logo slightly wider + aspect-fit (no distortion)
-  const logoBoxW = 22;   // wider
-  const logoBoxH = 14.5; // clean height
+  // ✅ logo slightly wider + aspect-fit (no distortion)
+  const logoBoxW = 22;
+  const logoBoxH = 14.5;
   const gap = 5;
 
+  const headerCompanyName = firstNonEmpty(dynamicCompanyName, ""); // avoid forcing static
   doc.setFont("helvetica", "bold");
   doc.setFontSize(23);
   doc.setTextColor(0, 0, 0);
 
-  const nameW = doc.getTextWidth(companyName);
+  const nameW = doc.getTextWidth(headerCompanyName || " "); // prevent NaN
   const totalW = logoBoxW + gap + nameW;
   const startX = Math.max(10, (pageW - totalW) / 2);
 
@@ -606,7 +733,9 @@ export async function downloadProductPdf(
   }
 
   // text baseline aligned with logo box
-  doc.text(companyName, logoX + logoBoxW + gap, headerTop + 11.0);
+  if (headerCompanyName) {
+    doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
+  }
 
   const lineY = headerTop + 17.2;
   doc.setDrawColor(GOLD_LINE[0], GOLD_LINE[1], GOLD_LINE[2]);
@@ -624,7 +753,7 @@ export async function downloadProductPdf(
   const M = 14;
   const heroTop = 27;
 
-  // ✅ CHANGE #2: fabric code not hugging the corner (shift right a bit)
+  // ✅ fabric code not hugging the corner
   const codeX = M + 2.5;
 
   doc.setFont("helvetica", "bold");
@@ -854,7 +983,7 @@ export async function downloadProductPdf(
 
   const qrX = pageW - M - qrCardW;
 
-  // ✅ CHANGE #3: QR a bit DOWN (was by - 6)
+  // QR a bit DOWN
   const qrY = Math.min(by - 2, contentMaxY - qrCardH);
 
   const leftMaxW = showQr ? (qrX - M - qrGap) : (pageW - M * 2);
@@ -934,7 +1063,7 @@ export async function downloadProductPdf(
     }
   }
 
-  /* ---------------- FOOTER (icons fixed + clickable) ---------------- */
+  /* ---------------- FOOTER (dynamic: phone1, whatsappNumber, primaryEmail) ---------------- */
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.35);
   doc.line(M, footerLineY, pageW - M, footerLineY);
@@ -942,20 +1071,29 @@ export async function downloadProductPdf(
   const footerY = footerLineY + 10;
   const iconR = 4.0;
 
-  const tel1 = normalizeTel(phone1);
-  const tel2 = normalizeTel(phone2);
-  const wa2 = normalizeWaDigits(phone2);
-  const webUrl = normalizeUrl(website);
+  const footerPhone1 = String(dynamicPhone1 || "").trim();
+  const footerPhone2 = String(dynamicPhone2 || "").trim(); // whatsappNumber
+  const footerEmail = String(dynamicEmail || "").trim();
+  const footerWebsite = String(dynamicWebsite || "").trim();
+
+  const tel1 = normalizeTel(footerPhone1);
+  const wa2 = normalizeWaDigits(footerPhone2);
+
+  // if email present -> mailto, else if website present -> open url
+  const thirdText = footerEmail || footerWebsite;
+  const thirdUrl = looksLikeEmail(thirdText)
+    ? `mailto:${normalizeEmail(thirdText)}`
+    : (thirdText ? normalizeUrl(thirdText) : "");
 
   const footerItems = [
-    { text: String(phone1 || ""), color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" },
+    { text: footerPhone1, color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" },
     {
-      text: String(phone2 || ""),
+      text: footerPhone2,
       color: [22, 163, 74],
       icon: "whatsapp",
-      url: wa2 ? `https://wa.me/${wa2}` : (tel2 ? `tel:${tel2}` : ""),
+      url: wa2 ? `https://wa.me/${wa2}` : "",
     },
-    { text: String(website || ""), color: [30, 64, 175], icon: "mail", url: webUrl },
+    { text: thirdText, color: [30, 64, 175], icon: "mail", url: thirdUrl },
   ].filter((x) => x.text && x.text.trim());
 
   doc.setFont("helvetica", "bold");
@@ -994,11 +1132,11 @@ export async function downloadProductPdf(
     fx += itemW + gapX;
   }
 
-  if (addressLine) {
+  if (dynamicAddress) {
     doc.setFont("helvetica", "normal");
     doc.setFontSize(10);
     doc.setTextColor(100, 116, 139);
-    const addrLines = pdfWrap(doc, String(addressLine), pageW - M * 2).slice(0, 2);
+    const addrLines = pdfWrap(doc, String(dynamicAddress), pageW - M * 2).slice(0, 2);
     doc.text(addrLines, pageW / 2, pageH - 10, { align: "center" });
   }
 
