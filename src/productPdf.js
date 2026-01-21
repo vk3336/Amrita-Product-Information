@@ -126,7 +126,7 @@ async function toDataUrl(url) {
   });
 }
 
-/* ---- NEW: get dataUrl intrinsic size (for perfect logo aspect) ---- */
+/* ---- get dataUrl intrinsic size (for perfect logo aspect) ---- */
 async function getDataUrlSize(dataUrl) {
   const src = String(dataUrl || "");
   if (!src.startsWith("data:image/")) return null;
@@ -242,92 +242,95 @@ async function makeQrDataUrl(data) {
   }
 }
 
-/* ------------------------------ Stars ------------------------------ */
-function drawStarShape(doc, x, y, size, fillPercent, color, emptyColor) {
-  const outerRadius = size / 2;
-  const innerRadius = outerRadius * 0.38;
+/* ------------------------------ Stars (NO BORDER / correct partial) ------------------------------ */
+function normalizeRatingTo5(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n)) return 0;
 
-  const points = [];
-  for (let i = 0; i < 5; i++) {
-    const outerAngle = Math.PI / 2 + (i * 2 * Math.PI) / 5;
-    points.push({ x: x + outerRadius * Math.cos(outerAngle), y: y - outerRadius * Math.sin(outerAngle) });
-    const innerAngle = outerAngle + Math.PI / 5;
-    points.push({ x: x + innerRadius * Math.cos(innerAngle), y: y - innerRadius * Math.sin(innerAngle) });
-  }
+  if (n <= 5) return Math.max(0, Math.min(5, n)); // already 0..5
+  if (n <= 10) return Math.max(0, Math.min(5, n / 2)); // 0..10 -> 0..5
+  if (n <= 100) return Math.max(0, Math.min(5, (n * 5) / 100)); // 0..100% -> 0..5
 
-  const drawStarPath = () => {
-    doc.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) doc.lineTo(points[i].x, points[i].y);
-    doc.close();
-  };
-
-  const fill = Math.max(0, Math.min(1, Number(fillPercent) || 0));
-  doc.setLineWidth(0.18);
-
-  if (fill === 0) {
-    doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
-    drawStarPath();
-    doc.stroke();
-    return;
-  }
-
-  if (fill === 1) {
-    doc.setFillColor(color[0], color[1], color[2]);
-    doc.setDrawColor(color[0], color[1], color[2]);
-    drawStarPath();
-    if (typeof doc.fillStroke === "function") doc.fillStroke();
-    else {
-      doc.fill();
-      doc.stroke();
-    }
-    return;
-  }
-
-  doc.setDrawColor(emptyColor[0], emptyColor[1], emptyColor[2]);
-  drawStarPath();
-  doc.stroke();
-
-  doc.saveGraphicsState();
-  const clipLeft = x - outerRadius;
-  const clipTop = y - outerRadius;
-  const clipWidth = outerRadius * 2 * fill;
-  const clipHeight = outerRadius * 2;
-
-  doc.rect(clipLeft, clipTop, clipWidth, clipHeight, null);
-  doc.clip();
-  if (doc.discardPath) doc.discardPath();
-
-  doc.setFillColor(color[0], color[1], color[2]);
-  doc.setDrawColor(color[0], color[1], color[2]);
-  drawStarPath();
-  doc.fill();
-
-  doc.restoreGraphicsState();
+  return 5;
 }
-function drawStars(doc, x, y, ratingValue, opts = {}) {
-  const v = Number(ratingValue);
-  const r = Number.isFinite(v) ? Math.max(0, Math.min(5, v)) : 0;
+function buildStarPoints(cx, cy, size) {
+  const outer = size / 2;
+  const inner = outer * 0.38;
+  const pts = [];
+  for (let i = 0; i < 5; i++) {
+    const oa = Math.PI / 2 + (i * 2 * Math.PI) / 5;
+    pts.push({ x: cx + outer * Math.cos(oa), y: cy - outer * Math.sin(oa) });
+    const ia = oa + Math.PI / 5;
+    pts.push({ x: cx + inner * Math.cos(ia), y: cy - inner * Math.sin(ia) });
+  }
+  return { pts, outer };
+}
+function starPath(doc, pts) {
+  doc.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) doc.lineTo(pts[i].x, pts[i].y);
+  doc.close();
+}
+function fillStar(doc, pts, rgb) {
+  doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  starPath(doc, pts);
+  doc.fill();
+}
+function drawStarNoStroke(doc, cx, cy, size, fillPercent, goldColor, emptyColor) {
+  const { pts, outer } = buildStarPoints(cx, cy, size);
+  const fill = Math.max(0, Math.min(1, Number(fillPercent) || 0));
+
+  // base empty star (filled)
+  fillStar(doc, pts, emptyColor);
+  if (fill <= 0) return;
+
+  // full gold star
+  if (fill >= 1) {
+    fillStar(doc, pts, goldColor);
+    return;
+  }
+
+  // partial: clip to star, fill rect (no stroke)
+  try {
+    doc.saveGraphicsState();
+
+    starPath(doc, pts);
+    doc.clip();
+    if (doc.discardPath) doc.discardPath();
+
+    doc.setFillColor(goldColor[0], goldColor[1], goldColor[2]);
+    const left = cx - outer;
+    const top = cy - outer;
+    doc.rect(left, top, outer * 2 * fill, outer * 2, "F");
+
+    doc.restoreGraphicsState();
+  } catch {
+    // fallback snap
+    if (fill >= 0.5) fillStar(doc, pts, goldColor);
+  }
+}
+function drawStars(doc, x, yCenter, ratingValue, opts = {}) {
+  const r = normalizeRatingTo5(ratingValue);
   const size = Number(opts.size ?? 3.0);
   const gap = Number(opts.gap ?? 0.5);
 
   const goldColor = [245, 158, 11];
   const emptyColor = [203, 213, 225];
 
-  let currentX = x;
+  let cx = x + size / 2;
   for (let i = 1; i <= 5; i++) {
     const starStart = i - 1;
     const starEnd = i;
 
     let fillPercent = 0;
-    if (r >= starEnd) fillPercent = 1.0;
+    if (r >= starEnd) fillPercent = 1;
     else if (r > starStart) fillPercent = r - starStart;
 
-    drawStarShape(doc, currentX + size / 2, y, size, fillPercent, goldColor, emptyColor);
-    currentX += size + gap;
+    drawStarNoStroke(doc, cx, yCenter, size, fillPercent, goldColor, emptyColor);
+    cx += size + gap;
   }
 }
 
-/* ------------------------------ Suitability -> bullets like screenshot ------------------------------ */
+/* ------------------------------ Suitability (FULLY DYNAMIC) ------------------------------ */
 function normalizeSuitabilityText(s) {
   return String(s || "")
     .replace(/\b\d{1,3}\s*%\b/g, "")
@@ -335,112 +338,83 @@ function normalizeSuitabilityText(s) {
     .replace(/\s{2,}/g, " ")
     .trim();
 }
-function parseSuitabilityLine(line) {
+function parseSuitabilityItem(line) {
   const raw = String(line || "").trim();
   if (!raw) return null;
+
   const parts = raw.split("|").map((x) => x.trim()).filter(Boolean);
-  const seg = normalizeSuitabilityText(parts[0] || "");
-  const mid = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : parts[1] || "";
-  const use = normalizeSuitabilityText(mid);
+  if (parts.length < 2) return null;
+
+  const seg = normalizeSuitabilityText(parts[0]);
+  const pctMatch = raw.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+  const pct = pctMatch ? Number(pctMatch[1]) : null;
+
+  const usePart = parts.length >= 3 ? parts.slice(1, -1).join(" - ") : parts[1];
+  const use = normalizeSuitabilityText(usePart);
+
   if (!seg) return null;
-  return { seg, use: use || "-" };
+  return { seg, use: use || "-", pct: Number.isFinite(pct) ? pct : null };
 }
-function buildSuitabilityBulletsLikeImage(p) {
-  const rows = (p?.suitability || []).map(parseSuitabilityLine).filter(Boolean);
-  const bySeg = new Map();
-  for (const r of rows) {
-    if (!bySeg.has(r.seg)) bySeg.set(r.seg, new Set());
-    const set = bySeg.get(r.seg);
-    const parts = String(r.use || "")
-      .split(/[,•]+/g)
-      .map((x) => normalizeSuitabilityText(x))
-      .filter(Boolean)
-      .filter((x) => x !== "-");
-    if (parts.length) parts.forEach((u) => set.add(u));
-    else if (r.use && r.use !== "-") set.add(r.use);
+function joinNice(arr) {
+  const a = (arr || []).filter(Boolean);
+  if (a.length <= 1) return a[0] || "-";
+  if (a.length === 2) return `${a[0]} and ${a[1]}`;
+  return `${a.slice(0, -1).join(", ")}, and ${a[a.length - 1]}`;
+}
+function isHomeOrAccessory(seg) {
+  const s = String(seg || "").toLowerCase();
+  return (
+    s.includes("home") ||
+    s.includes("accessor") ||
+    s.includes("uniform") ||
+    s.includes("workwear") ||
+    s.includes("work wear") ||
+    s.includes("work")
+  );
+}
+function buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg = 3, showPercent = false } = {}) {
+  const items = (p?.suitability || []).map(parseSuitabilityItem).filter(Boolean);
+
+  // seg -> use -> best pct
+  const map = new Map();
+  for (const it of items) {
+    if (!map.has(it.seg)) map.set(it.seg, new Map());
+    const useMap = map.get(it.seg);
+    const key = it.use || "-";
+    const prev = useMap.get(key);
+    const prevPct = prev?.pct ?? -1;
+    const nextPct = it.pct ?? -1;
+    if (!prev || nextPct > prevPct) useMap.set(key, { use: key, pct: it.pct });
   }
-  const get = (...names) => {
-    for (const n of names) if (bySeg.has(n)) return Array.from(bySeg.get(n));
-    return [];
-  };
 
-  const mens = get("Menswear");
-  const mensParts = [];
-  const hasCasual = mens.some((x) => /Casual shirts/i.test(x));
-  const hasShort = mens.some((x) => /short-sleeve/i.test(x));
-  if (hasCasual && hasShort) mensParts.push("Casual or short-sleeve shirts");
-  else if (hasCasual) mensParts.push("Casual shirts");
-  else if (hasShort) mensParts.push("Short-sleeve shirts");
-  if (mens.some((x) => /Kurta/i.test(x))) mensParts.push("kurtas");
-  if (mens.some((x) => /lounge pants/i.test(x))) mensParts.push("lounge pants");
-  const mensText = mensParts.length
-    ? `${mensParts.slice(0, -1).join(", ")}${mensParts.length > 1 ? " and " : ""}${mensParts[mensParts.length - 1]}.`
-    : "-";
+  const groups = [];
+  for (const [seg, useMap] of map.entries()) {
+    const uses = Array.from(useMap.values())
+      .filter((u) => u.use && u.use !== "-")
+      .sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1))
+      .slice(0, maxUsesPerSeg);
 
-  const womens = get("Womenswear");
-  const wParts = [];
-  if (womens.some((x) => /Blouses|tops/i.test(x))) wParts.push("Blouses");
-  if (womens.some((x) => /Summer dresses/i.test(x))) wParts.push("summer dresses");
-  if (womens.some((x) => /Skirts/i.test(x))) wParts.push("skirts");
-  if (womens.some((x) => /Tunics|kurtis/i.test(x))) wParts.push("tunics");
-  if (womens.some((x) => /Nightwear|loungewear/i.test(x))) wParts.push("nightwear");
-  const womensText = wParts.length
-    ? `${wParts.slice(0, -1).join(", ")}${wParts.length > 1 ? ", and " : ""}${wParts[wParts.length - 1]}.`
-    : "-";
+    const labels = uses.map((u) =>
+      showPercent && u.pct != null ? `${u.use} (${fmtNum(u.pct, 0)}%)` : u.use
+    );
 
-  const kids = get("Kidswear");
-  const unisex = get("Unisex");
-  const ku = [...kids, ...unisex];
-  const kuParts = [];
-  if (ku.some((x) => /Shirts|tops/i.test(x))) kuParts.push("Shirts");
-  if (ku.some((x) => /dresses|frocks/i.test(x))) kuParts.push("light dresses");
-  if (ku.some((x) => /Pyjamas|nightwear/i.test(x))) kuParts.push("pajamas");
-  if (ku.some((x) => /Scrub-style/i.test(x))) kuParts.push("non-medical scrub tops");
-  const kidsText = kuParts.length
-    ? `${kuParts.slice(0, -1).join(", ")}${kuParts.length > 1 ? ", and " : ""}${kuParts[kuParts.length - 1]}.`
-    : "-";
+    groups.push({
+      label: seg,
+      text: labels.length ? `${joinNice(labels)}.` : "-",
+      _home: isHomeOrAccessory(seg),
+      _score: uses[0]?.pct ?? 0,
+    });
+  }
 
-  const home = get("Home Textiles", "Home");
-  const accessories = get("Accessories");
-  const work = get("Uniforms / Workwear", "Workwear", "Work");
+  groups.sort((a, b) => (b._score ?? 0) - (a._score ?? 0));
 
-  const homeParts = [];
-  const hasPillow = home.some((x) => /Pillow covers/i.test(x));
-  const hasCushion = home.some((x) => /cushion covers/i.test(x));
-  const hasRunner = home.some((x) => /table runners/i.test(x));
-  if (hasPillow && hasCushion) homeParts.push("Pillow and cushion covers");
-  else if (hasPillow) homeParts.push("Pillow covers");
-  else if (hasCushion) homeParts.push("Cushion covers");
-  if (hasRunner) homeParts.push("decorative table runners");
-  const homeText = homeParts.length
-    ? `${homeParts[0]}${homeParts.length === 2 ? ", and " + homeParts[1] : ""}.`
-    : "-";
+  const apparel = groups.filter((g) => !g._home).map(({ label, text }) => ({ label, text }));
+  const homeAcc = groups.filter((g) => g._home).map(({ label, text }) => ({ label, text }));
 
-  const accParts = [];
-  if (accessories.some((x) => /Pocket squares/i.test(x))) accParts.push("Pocket squares");
-  if (accessories.some((x) => /scarves/i.test(x))) accParts.push("light scarves");
-  if (accessories.some((x) => /trims|belts/i.test(x))) accParts.push("fabric trims");
-  const accText = accParts.length
-    ? `${accParts.slice(0, -1).join(", ")}${accParts.length > 1 ? ", and " : ""}${accParts[accParts.length - 1]}.`
-    : "-";
-
-  const workText = work.some((x) => /Light service uniforms/i.test(x)) ? "Light indoor service uniforms." : "-";
-
-  return {
-    apparel: [
-      { label: "Menswear", text: mensText },
-      { label: "Womenswear", text: womensText },
-      { label: "Kids & Unisex", text: kidsText },
-    ],
-    homeAcc: [
-      { label: "Home", text: homeText },
-      { label: "Accessories", text: accText },
-      { label: "Work", text: workText },
-    ],
-  };
+  return { apparel, homeAcc };
 }
 
-/* ------------------------------ footer icons (FIXED: clean + correct) ------------------------------ */
+/* ------------------------------ footer icons ------------------------------ */
 function footerCircle(doc, cx, cy, r, fill) {
   doc.setFillColor(fill[0], fill[1], fill[2]);
   doc.circle(cx, cy, r, "F");
@@ -451,11 +425,8 @@ function setIconStroke(doc, w = 0.95) {
   if (typeof doc.setLineCap === "function") doc.setLineCap(1); // round
   if (typeof doc.setLineJoin === "function") doc.setLineJoin(1);
 }
-
-/* phone: classic handset */
 function drawPhoneIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.95);
-
   const a = r * 0.62;
   const b = r * 0.30;
 
@@ -467,8 +438,6 @@ function drawPhoneIcon(doc, cx, cy, r) {
 
   doc.line(cx - r * 0.10, cy - r * 0.05, cx + r * 0.10, cy + r * 0.05);
 }
-
-/* whatsapp: bubble + tail + small handset */
 function drawWhatsappIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.85);
 
@@ -483,8 +452,6 @@ function drawWhatsappIcon(doc, cx, cy, r) {
   doc.line(cx - r * 0.18, cy + r * 0.06, cx - r * 0.02, cy + r * 0.22);
   doc.line(cx - r * 0.02, cy + r * 0.22, cx + r * 0.22, cy + r * 0.06);
 }
-
-/* mail: envelope */
 function drawMailIcon(doc, cx, cy, r) {
   setIconStroke(doc, 0.95);
 
@@ -500,7 +467,7 @@ function drawMailIcon(doc, cx, cy, r) {
   doc.line(x, y + h, x + w, y + h);
 }
 
-/* ------------------------------ NEW: Company Information (dynamic) ------------------------------ */
+/* ------------------------------ Company Information (dynamic) ------------------------------ */
 const _ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const DEFAULT_COMPANY_INFO_URL = String(_ENV.VITE_COMPANY_INFORMATION || "").replace(/\/$/, "");
 const DEFAULT_ESPO_API_KEY = String(_ENV.VITE_X_API_KEY || "");
@@ -540,7 +507,6 @@ function pickCompanyRecord(list, { preferId, preferName } = {}) {
   const byAGE = arr.find((x) => String(x?.name || "").trim().toLowerCase() === "age");
   if (byAGE) return byAGE;
 
-  // fallback: highest versionNumber
   const sorted = [...arr].sort((a, b) => Number(b?.versionNumber || 0) - Number(a?.versionNumber || 0));
   return sorted[0] || arr[0] || null;
 }
@@ -556,7 +522,6 @@ async function fetchCompanyInformation({
 
   try {
     const u = new URL(base);
-    // these are safe (Espo usually supports them). If ignored, no issue.
     if (!u.searchParams.has("maxSize")) u.searchParams.set("maxSize", "200");
     if (!u.searchParams.has("sortBy")) u.searchParams.set("sortBy", "versionNumber");
     if (!u.searchParams.has("sortDirection")) u.searchParams.set("sortDirection", "DESC");
@@ -564,7 +529,6 @@ async function fetchCompanyInformation({
     const headers = {};
     if (apiKey) {
       headers["X-Api-Key"] = apiKey;
-      // some setups also accept Bearer; harmless if ignored
       headers["Authorization"] = `Bearer ${apiKey}`;
     }
 
@@ -572,8 +536,7 @@ async function fetchCompanyInformation({
     if (!res.ok) return null;
 
     const data = await res.json();
-    const picked = pickCompanyRecord(data?.list, { preferId, preferName });
-    return picked || null;
+    return pickCompanyRecord(data?.list, { preferId, preferName }) || null;
   } catch {
     return null;
   }
@@ -601,24 +564,24 @@ export async function downloadProductPdf(
     qrDataUrl,
     logoPath = "/logo1.png",
 
-    // ✅ these are now dynamic by default (from VITE_COMPANY_INFORMATION)
+    // dynamic by default (from VITE_COMPANY_INFORMATION)
     companyInfoUrl = DEFAULT_COMPANY_INFO_URL,
     companyInfoId = DEFAULT_COMPANY_INFO_ID,
     companyInfoPreferName = DEFAULT_COMPANY_PREFER_NAME,
     espoApiKey = DEFAULT_ESPO_API_KEY,
 
-    // optional manual overrides (if you pass them, they win)
+    // optional manual overrides (if passed, they win)
     companyName,
     phone1,
-    phone2, // you asked: use whatsappNumber here
-    email,  // you asked: use primaryEmail here
-    website, // optional (if you still want website sometimes)
+    phone2, // whatsappNumber
+    email,  // primaryEmail
+    website, // optional
     addressLine,
 
     optionsCount,
   } = {}
 ) {
-  // ✅ pull company info once (cached)
+  // company info once (cached)
   const ci = await getCompanyInformationCached({
     url: companyInfoUrl,
     apiKey: espoApiKey,
@@ -626,13 +589,13 @@ export async function downloadProductPdf(
     preferName: companyInfoPreferName,
   });
 
-  // ✅ map fields exactly as you requested
-  const dynamicCompanyName = firstNonEmpty(companyName, ci?.legalName, ci?.name, ""); // legalName
-  const dynamicPhone1 = firstNonEmpty(phone1, ci?.phone1, ""); // phone1
-  const dynamicPhone2 = firstNonEmpty(phone2, ci?.whatsappNumber, ""); // whatsappNumber
-  const dynamicEmail = firstNonEmpty(email, ci?.primaryEmail, ""); // primaryEmail
-  const dynamicAddress = firstNonEmpty(addressLine, buildAddressLineFromCompany(ci), ci?.addressStreet, ""); // addressStreet (+ rest if present)
-  const dynamicWebsite = firstNonEmpty(website, ""); // keep optional if you want
+  // map company fields
+  const dynamicCompanyName = firstNonEmpty(companyName, ci?.legalName, ci?.name, "");
+  const dynamicPhone1 = firstNonEmpty(phone1, ci?.phone1, "");
+  const dynamicPhone2 = firstNonEmpty(phone2, ci?.whatsappNumber, "");
+  const dynamicEmail = firstNonEmpty(email, ci?.primaryEmail, "");
+  const dynamicAddress = firstNonEmpty(addressLine, buildAddressLineFromCompany(ci), ci?.addressStreet, "");
+  const dynamicWebsite = firstNonEmpty(website, "");
 
   const doc = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
@@ -644,7 +607,6 @@ export async function downloadProductPdf(
   const PILL_BLUE = [30, 58, 138];
   const PILL_TEAL = [13, 116, 110];
   const AMBER_BG = [255, 247, 204];
-  const AMBER_BORDER = [234, 179, 8];
   const GOLD_LINE = [201, 162, 106];
   const GOLD_LINE_DARK = [122, 92, 52];
   const BULLET = [201, 162, 106];
@@ -665,8 +627,9 @@ export async function downloadProductPdf(
 
   const categoryPill = toUpperLabel(firstNonEmpty(p?.category, "Woven Fabrics"));
   const supplyPill = toKebabLower(firstNonEmpty(p?.supplyModel, "never-out-of-stock"));
-  const ratingValue = Number(firstNonEmpty(p?.ratingValue, 0));
-  const ratingSafe = Number.isFinite(ratingValue) ? Math.max(0, Math.min(5, ratingValue)) : 0;
+
+  // IMPORTANT: rating can be 0..5, 0..10 or 0..100 (normalized in drawStars)
+  const ratingValue = firstNonEmpty(p?.ratingValue, p?.rating, p?.ratingPercent, 0);
 
   const autoOptions =
     Number.isFinite(Number(p?.optionsCount)) ? Number(p.optionsCount) :
@@ -686,10 +649,9 @@ export async function downloadProductPdf(
   let logoDataUrl = null;
   try { logoDataUrl = await toDataUrl(logoPath); } catch { logoDataUrl = null; }
 
-  // ✅ NEW: logo size for perfect aspect-fit
   const logoSize = logoDataUrl ? await getDataUrlSize(logoDataUrl) : null;
 
-  // ✅ dynamic QR (per product page)
+  // dynamic QR
   let finalQrDataUrl = null;
   if (qrDataUrl && typeof qrDataUrl === "string") finalQrDataUrl = qrDataUrl;
   else if (productLink) finalQrDataUrl = await makeQrDataUrl(productLink);
@@ -697,17 +659,16 @@ export async function downloadProductPdf(
   /* ------------------------------ HEADER ------------------------------ */
   const headerTop = 6.5;
 
-  // ✅ logo slightly wider + aspect-fit (no distortion)
   const logoBoxW = 22;
   const logoBoxH = 14.5;
   const gap = 5;
 
-  const headerCompanyName = firstNonEmpty(dynamicCompanyName, ""); // avoid forcing static
+  const headerCompanyName = firstNonEmpty(dynamicCompanyName, "");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(23);
   doc.setTextColor(0, 0, 0);
 
-  const nameW = doc.getTextWidth(headerCompanyName || " "); // prevent NaN
+  const nameW = doc.getTextWidth(headerCompanyName || " ");
   const totalW = logoBoxW + gap + nameW;
   const startX = Math.max(10, (pageW - totalW) / 2);
 
@@ -732,10 +693,7 @@ export async function downloadProductPdf(
     try { doc.addImage(logoDataUrl, fmt, dx, dy, drawW, drawH); } catch {}
   }
 
-  // text baseline aligned with logo box
-  if (headerCompanyName) {
-    doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
-  }
+  if (headerCompanyName) doc.text(headerCompanyName, logoX + logoBoxW + gap, headerTop + 11.0);
 
   const lineY = headerTop + 17.2;
   doc.setDrawColor(GOLD_LINE[0], GOLD_LINE[1], GOLD_LINE[2]);
@@ -753,7 +711,6 @@ export async function downloadProductPdf(
   const M = 14;
   const heroTop = 27;
 
-  // ✅ fabric code not hugging the corner
   const codeX = M + 2.5;
 
   doc.setFont("helvetica", "bold");
@@ -790,13 +747,12 @@ export async function downloadProductPdf(
     const badgeW = 34;
     const badgeH = 7.0;
     const bx = imgX + 14;
-    const by = imgY + imgH - badgeH - 7;
+    const by2 = imgY + imgH - badgeH - 7;
 
-    fillR(doc, bx, by, badgeW, badgeH, [67, 56, 202], 2.4);
-    strokeR(doc, bx, by, badgeW, badgeH, [99, 102, 241], 2.4, 0.18);
+    fillR(doc, bx, by2, badgeW, badgeH, [67, 56, 202], 2.4);
 
     const icx = bx + 5;
-    const icy = by + badgeH / 2 + 0.25;
+    const icy = by2 + badgeH / 2 + 0.25;
     doc.setDrawColor(255, 255, 255);
     doc.setLineWidth(0.45);
     doc.rect(icx - 1.25, icy - 1.25, 2.5, 2.5, "S");
@@ -807,7 +763,7 @@ export async function downloadProductPdf(
     doc.setFont("helvetica", "bold");
     doc.setFontSize(7.9);
     doc.setTextColor(255, 255, 255);
-    doc.text(`${fmtNum(optCount, 0)}  Options`, bx + 8.2, by + badgeH * 0.68);
+    doc.text(`${fmtNum(optCount, 0)}  Options`, bx + 8.2, by2 + badgeH * 0.68);
   }
 
   // right block
@@ -828,15 +784,19 @@ export async function downloadProductPdf(
   });
   px += p2.w + 4;
 
-  // rating pill
+  // rating pill (NO BORDER)
   const ratingPillH = 7.2;
   const ratingPillW = 44;
   fillR(doc, px, pillsY, ratingPillW, ratingPillH, AMBER_BG, 3.6);
-  strokeR(doc, px, pillsY, ratingPillW, ratingPillH, AMBER_BORDER, 3.6, 0.22);
-  const starsW = 5 * 3.0 + 4 * 0.5;
-  drawStars(doc, px + (ratingPillW - starsW) / 2, pillsY + ratingPillH * 0.64, ratingSafe, { size: 3.0, gap: 0.5 });
 
-  /* ---- Title + Tagline: BLACK + fill the same height as image ---- */
+  const STAR_SIZE = 3.0;
+  const STAR_GAP = 0.5;
+  const starsW = 5 * STAR_SIZE + 4 * STAR_GAP;
+  const yCenter = pillsY + ratingPillH / 2 + 0.2;
+
+  drawStars(doc, px + (ratingPillW - starsW) / 2, yCenter, ratingValue, { size: STAR_SIZE, gap: STAR_GAP });
+
+  /* ---- Title + Tagline ---- */
   const titleTopY = pillsY + 16.5;
   const textBottomY = imgY + imgH - 2.0;
 
@@ -950,7 +910,7 @@ export async function downloadProductPdf(
   })();
   drawCell(tableX + cellW, tableY + rowH * 3, cellW, "Sales MOQ", moqVal);
 
-  // finish full width (no overlap)
+  // finish full width
   const finishY = tableY + rowH * 4;
   const finishLabelW = 24;
   const valueX = tableX + finishLabelW;
@@ -969,10 +929,9 @@ export async function downloadProductPdf(
   const finishLines = pdfWrap(doc, finishText, valueW - 16).slice(0, 2);
   doc.text(finishLines, valueX + valueW / 2, finishY + 8.0, { align: "center" });
 
-  /* ---------------- Bullets + QR on right (dynamic per productUrl) ---------------- */
-  const suit = buildSuitabilityBulletsLikeImage(p);
+  /* ---------------- Suitability + QR ---------------- */
+  const suit = buildSuitabilityBulletsDynamic(p, { maxUsesPerSeg: 3, showPercent: false });
 
-  // QR card settings (right side)
   const showQr = !!finalQrDataUrl;
   const qrCardW = 34;
   const qrCardH = 42;
@@ -982,8 +941,6 @@ export async function downloadProductPdf(
   let by = finishY + finishH + 9;
 
   const qrX = pageW - M - qrCardW;
-
-  // QR a bit DOWN
   const qrY = Math.min(by - 2, contentMaxY - qrCardH);
 
   const leftMaxW = showQr ? (qrX - M - qrGap) : (pageW - M * 2);
@@ -1034,7 +991,7 @@ export async function downloadProductPdf(
     return { y: y + lineH, drawn: true };
   }
 
-  if (by + 10 < contentMaxY) {
+  if (by + 10 < contentMaxY && suit.apparel.length) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12.0);
     doc.setTextColor(0, 0, 0);
@@ -1049,7 +1006,7 @@ export async function downloadProductPdf(
     by += 2.0;
   }
 
-  if (by + 10 < contentMaxY) {
+  if (by + 10 < contentMaxY && suit.homeAcc.length) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12.0);
     doc.setTextColor(0, 0, 0);
@@ -1063,7 +1020,7 @@ export async function downloadProductPdf(
     }
   }
 
-  /* ---------------- FOOTER (dynamic: phone1, whatsappNumber, primaryEmail) ---------------- */
+  /* ---------------- FOOTER (dynamic) ---------------- */
   doc.setDrawColor(BORDER[0], BORDER[1], BORDER[2]);
   doc.setLineWidth(0.35);
   doc.line(M, footerLineY, pageW - M, footerLineY);
@@ -1072,14 +1029,13 @@ export async function downloadProductPdf(
   const iconR = 4.0;
 
   const footerPhone1 = String(dynamicPhone1 || "").trim();
-  const footerPhone2 = String(dynamicPhone2 || "").trim(); // whatsappNumber
+  const footerPhone2 = String(dynamicPhone2 || "").trim(); // whatsapp
   const footerEmail = String(dynamicEmail || "").trim();
   const footerWebsite = String(dynamicWebsite || "").trim();
 
   const tel1 = normalizeTel(footerPhone1);
   const wa2 = normalizeWaDigits(footerPhone2);
 
-  // if email present -> mailto, else if website present -> open url
   const thirdText = footerEmail || footerWebsite;
   const thirdUrl = looksLikeEmail(thirdText)
     ? `mailto:${normalizeEmail(thirdText)}`
@@ -1087,12 +1043,7 @@ export async function downloadProductPdf(
 
   const footerItems = [
     { text: footerPhone1, color: [194, 120, 62], icon: "phone", url: tel1 ? `tel:${tel1}` : "" },
-    {
-      text: footerPhone2,
-      color: [22, 163, 74],
-      icon: "whatsapp",
-      url: wa2 ? `https://wa.me/${wa2}` : "",
-    },
+    { text: footerPhone2, color: [22, 163, 74], icon: "whatsapp", url: wa2 ? `https://wa.me/${wa2}` : "" },
     { text: thirdText, color: [30, 64, 175], icon: "mail", url: thirdUrl },
   ].filter((x) => x.text && x.text.trim());
 
