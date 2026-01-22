@@ -15,9 +15,7 @@ import { useProducts } from "./hooks/useProducts";
 function getInitialTheme() {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === "light" || saved === "dark") return saved;
-  const prefersLight =
-    window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
-  return prefersLight ? "light" : "dark";
+  return "dark"; // ✅ default to dark
 }
 
 /* ------------------------------ ROUTE ANALYTICS ------------------------------ */

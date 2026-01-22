@@ -1,6 +1,8 @@
-:root {
-  color-scheme: dark;
-}
+/* src/index.css */
+
+/* Use OS-native widgets (scrollbars, form controls) that match the active theme */
+html { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -11,10 +13,9 @@ html, body {
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue";
-  background: radial-gradient(1200px 600px at 20% -10%, rgba(124,92,255,.35), transparent 60%),
-              radial-gradient(900px 500px at 90% 0%, rgba(45,212,191,.18), transparent 55%),
-              #0b0c10;
-  color: #fff;
 }
 
-a { color: inherit; text-decoration: none; }
+a {
+  color: inherit;
+  text-decoration: none;
+}

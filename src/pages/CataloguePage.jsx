@@ -156,7 +156,7 @@ export default function CataloguePage({ theme, onToggleTheme, products, loading,
                       </div>
                       <div className="spec">
                         <div className="k">Colors</div>
-                        <div className="v">{Array.isArray(p.color) ? p.color.length : "-"}</div>
+                        <div className="v">{firstNonEmpty(p.color, "-")}</div>
                       </div>
                       <div className="spec">
                         <div className="k">MOQ</div>

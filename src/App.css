@@ -1,6 +1,11 @@
 /* src/App.css */
 :root{
   --bg: #0b0c10;
+  /* page background glow (used by body) */
+  --bgGrad:
+    radial-gradient(1200px 650px at 18% -10%, rgba(124,92,255,.36), transparent 60%),
+    radial-gradient(980px 560px at 88% 0%, rgba(45,212,191,.22), transparent 55%),
+    radial-gradient(900px 650px at 22% 112%, rgba(124,92,255,.16), transparent 60%);
   --muted: rgba(255,255,255,.65);
   --muted2: rgba(255,255,255,.45);
   --line: rgba(255,255,255,.10);
@@ -14,7 +19,12 @@
 
 /* LIGHT THEME */
 html[data-theme="light"]{
-  --bg: #f5f6fb;
+  --bg: #f6f7ff;
+  /* keep the same brand glow, but subtle for light */
+  --bgGrad:
+    radial-gradient(1100px 620px at 18% -10%, rgba(124,92,255,.18), transparent 62%),
+    radial-gradient(980px 560px at 88% 0%, rgba(45,212,191,.14), transparent 58%),
+    radial-gradient(900px 650px at 22% 112%, rgba(124,92,255,.10), transparent 62%);
   --white: #0b0c10;
   --muted: rgba(0,0,0,.70);
   --muted2: rgba(0,0,0,.55);
@@ -24,10 +34,12 @@ html[data-theme="light"]{
 }
 
 body{
-  background: var(--bg);
+  background: var(--bgGrad), var(--bg);
+  background-attachment: fixed;
   color: var(--white);
   margin: 0;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  min-height: 100vh;
 }
 
 .app{
@@ -49,7 +61,7 @@ body{
 }
 html[data-theme="light"] .header{
   border: 1px solid rgba(0,0,0,.10);
-  background: rgba(255,255,255,.75);
+  background: rgba(255,255,255,.88);
 }
 
 .brand{
@@ -88,9 +100,10 @@ html[data-theme="light"] .header{
 .themeBtn:hover{ background: rgba(255,255,255,.10); }
 html[data-theme="light"] .themeBtn{
   border:1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.70);
+  box-shadow: 0 12px 30px rgba(11,12,16,.06);
 }
-html[data-theme="light"] .themeBtn:hover{ background: rgba(0,0,0,.06); }
+html[data-theme="light"] .themeBtn:hover{ background: rgba(255,255,255,.88); }
 .themeIcon{ font-size: 14px; }
 .themeText{ font-size: 12px; opacity:.9; }
 
@@ -105,7 +118,7 @@ html[data-theme="light"] .themeBtn:hover{ background: rgba(0,0,0,.06); }
 }
 html[data-theme="light"] .filters{
   border: 1px solid rgba(0,0,0,.10);
-  background: rgba(255,255,255,.70);
+  background: rgba(255,255,255,.82);
 }
 
 .searchWrap{
@@ -119,7 +132,8 @@ html[data-theme="light"] .filters{
 }
 html[data-theme="light"] .searchWrap{
   border: 1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.72);
+  box-shadow: 0 12px 30px rgba(11,12,16,.07);
 }
 .searchIcon{ opacity:.75; font-size: 14px; }
 .search{
@@ -141,9 +155,9 @@ html[data-theme="light"] .searchWrap{
 .clearBtn:hover{ background: rgba(255,255,255,.10); }
 html[data-theme="light"] .clearBtn{
   border: 1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.70);
 }
-html[data-theme="light"] .clearBtn:hover{ background: rgba(0,0,0,.06); }
+html[data-theme="light"] .clearBtn:hover{ background: rgba(255,255,255,.86); }
 
 /* summary */
 .summary{
@@ -317,12 +331,12 @@ html[data-theme="light"] .ctaRow{ border-top: 1px solid rgba(0,0,0,.10); }
 .backBtn:hover{ background: rgba(255,255,255,.10); }
 html[data-theme="light"] .backBtn{
   border:1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.70);
+  box-shadow: 0 12px 30px rgba(11,12,16,.06);
 }
-html[data-theme="light"] .backBtn:hover{ background: rgba(0,0,0,.06); }
+html[data-theme="light"] .backBtn:hover{ background: rgba(255,255,255,.88); }
 
 .topActions{ display:flex; gap:10px; align-items:center; }
-
 
 .qrBtn{
   padding:10px 14px;
@@ -336,9 +350,10 @@ html[data-theme="light"] .backBtn:hover{ background: rgba(0,0,0,.06); }
 .qrBtn:hover{ background: rgba(255,255,255,.10); }
 html[data-theme="light"] .qrBtn{
   border:1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.70);
+  box-shadow: 0 12px 30px rgba(11,12,16,.06);
 }
-html[data-theme="light"] .qrBtn:hover{ background: rgba(0,0,0,.06); }
+html[data-theme="light"] .qrBtn:hover{ background: rgba(255,255,255,.88); }
 
 .details{
   display:grid;
@@ -712,9 +727,10 @@ html[data-theme="light"] .qrModal{
 .qrClose:hover{ background: rgba(255,255,255,.10); }
 html[data-theme="light"] .qrClose{
   border:1px solid rgba(0,0,0,.12);
-  background: rgba(0,0,0,.04);
+  background: rgba(255,255,255,.70);
+  box-shadow: 0 12px 30px rgba(11,12,16,.06);
 }
-html[data-theme="light"] .qrClose:hover{ background: rgba(0,0,0,.06); }
+html[data-theme="light"] .qrClose:hover{ background: rgba(255,255,255,.88); }
 
 .qrBig{
   margin-top:18px; /* ✅ more down */
@@ -749,4 +765,13 @@ html[data-theme="light"] .qrClose:hover{ background: rgba(0,0,0,.06); }
 }
 .pdfBtn:hover{
   background: linear-gradient(135deg, rgba(124,92,255,.35), rgba(45,212,191,.25));
+}
+
+html[data-theme="light"] .pdfBtn{
+  border: 1px solid rgba(0,0,0,.12);
+  background: linear-gradient(135deg, rgba(124,92,255,.16), rgba(45,212,191,.12));
+  box-shadow: 0 12px 30px rgba(11,12,16,.06);
+}
+html[data-theme="light"] .pdfBtn:hover{
+  background: linear-gradient(135deg, rgba(124,92,255,.22), rgba(45,212,191,.16));
 }
