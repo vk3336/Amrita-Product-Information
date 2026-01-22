@@ -742,7 +742,6 @@ function getColorsText(p) {
   return cleanStr(c);
 }
 
-
 /* ✅ NEW: small async utilities */
 async function mapLimit(arr, limit, iterator) {
   const a = Array.isArray(arr) ? arr : [];
@@ -763,6 +762,50 @@ async function mapLimit(arr, limit, iterator) {
 
   await Promise.all(workers);
   return ret;
+}
+
+/* ✅ NEW: make collection list unique + remove hero product from next pages */
+function uniqueCollectionProducts(list, { excludeId = "", excludeFabricCode = "" } = {}) {
+  const arr = Array.isArray(list) ? list.filter(Boolean) : [];
+  const exId = cleanStr(excludeId);
+  const exCode = cleanStr(excludeFabricCode).toLowerCase();
+
+  // 1) filter out hero product (by id OR fabricCode)
+  const filtered = arr.filter((p) => {
+    const id = cleanStr(p?.id);
+    const code = cleanStr(p?.fabricCode).toLowerCase();
+    if (exId && id && id === exId) return false;
+    if (exCode && code && code === exCode) return false;
+    return true;
+  });
+
+  // 2) de-dupe by id first (strongest)
+  const byId = new Map();
+  const noId = [];
+  for (const p of filtered) {
+    const id = cleanStr(p?.id);
+    if (id) {
+      if (!byId.has(id)) byId.set(id, p);
+    } else {
+      noId.push(p);
+    }
+  }
+  const step1 = [...byId.values(), ...noId];
+
+  // 3) de-dupe by fabricCode as safety (API paging/order can repeat)
+  const seenCode = new Set();
+  const out = [];
+  for (const p of step1) {
+    const code = cleanStr(p?.fabricCode).toLowerCase();
+    if (!code) {
+      out.push(p);
+      continue;
+    }
+    if (seenCode.has(code)) continue;
+    seenCode.add(code);
+    out.push(p);
+  }
+  return out;
 }
 
 /* ------------------------------ HEADER/FOOTER (same for all pages) ------------------------------ */
@@ -925,7 +968,6 @@ function autoFitFont(doc, text, maxW, start = 10, min = 5.6) {
   return fs;
 }
 
-
 function drawLightChip(doc, x, y, w, h, label, value) {
   // white chip with border (better on white card)
   doc.setDrawColor(226, 232, 240);
@@ -967,7 +1009,6 @@ function drawKV(doc, x, y, colW, label, value) {
   }
 }
 
-
 function pickRatingValue(p) {
   const r =
     p?.ratingValue !== undefined && p?.ratingValue !== null && cleanStr(p?.ratingValue) !== ""
@@ -999,7 +1040,6 @@ function drawRatingBlock(doc, x, y, colW, ratingVal) {
   const tx = Math.min(x + colW - 2, x + 24); // keep inside column always
   doc.text(txt, tx, starY + 0.6, { align: "right" });
 }
-
 
 function drawCollectionProductCard(doc, p, x, y, w, h, { BORDER, TEXT = [15, 23, 42] } = {}) {
   const r = 7;
@@ -1076,13 +1116,12 @@ function drawCollectionProductCard(doc, p, x, y, w, h, { BORDER, TEXT = [15, 23,
   const tableX = x + pad;
   const tableY = imgBoxY + imgBoxH + 8;
   const tableW = w - pad * 2;
-  const tableH = (y + h - pad) - tableY;
+  const tableH = y + h - pad - tableY;
 
   if (tableH > 22) {
     drawCardSpecsTable(doc, p, tableX, tableY, tableW, tableH, { BORDER, TEXT });
   }
 }
-
 
 // helper
 function wrapLinesLimit(doc, text, maxW, maxLines) {
@@ -1130,7 +1169,6 @@ function drawMiniSpecCell(doc, x, y, w, h, label, value, { TEXT = [15, 23, 42] }
   const lines = wrapLinesLimit(doc, v, valueMaxW, maxLines);
   doc.text(lines, x + pad, valueTop);
 }
-
 
 function drawCardSpecsTable(doc, p, x, y, w, h, { BORDER, TEXT } = {}) {
   const r = 4.5;
@@ -1200,8 +1238,6 @@ function drawCardSpecsTable(doc, p, x, y, w, h, { BORDER, TEXT } = {}) {
   drawMiniSpecCell(doc, x,        y3, colW, r4, "Content", content, { TEXT });
   drawMiniSpecCell(doc, x + colW, y3, colW, r4, "Motif",   motif,   { TEXT });
 }
-
-
 
 /* ------------------------------ main export ------------------------------ */
 export async function downloadProductPdf(
@@ -1728,7 +1764,15 @@ export async function downloadProductPdf(
       order: "ASC",
     });
 
-    const products = Array.isArray(list) ? list.filter(Boolean) : [];
+    // ✅ FIX: make unique + remove current (hero) product so it doesn't repeat
+    const heroId = cleanStr(p?.id);
+    const heroCode = cleanStr(p?.fabricCode);
+
+    let products = uniqueCollectionProducts(list, {
+      excludeId: heroId,
+      excludeFabricCode: heroCode,
+    });
+
     if (products.length) {
       // Preload card images with caching + limited concurrency (fast + stable)
       const imgCache = new Map(); // url -> { dataUrl, size }
@@ -1775,7 +1819,7 @@ export async function downloadProductPdf(
       const gapY = 9;
       const cols = 2;
 
-      const contentMaxY2 = (pageH - 32) - 8;
+      const contentMaxY2 = pageH - 32 - 8;
       const availH = contentMaxY2 - startY;
       const rows = 2;
       const cardH = Math.max(96, (availH - gapY) / rows);
